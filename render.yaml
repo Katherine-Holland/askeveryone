@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: askeveryone
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PORT
+        value: 10000
+    # Add your environment variables here or configure them in Render dashboard
+    # - key: API_KEY
+    #   sync: false
