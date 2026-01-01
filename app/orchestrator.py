@@ -18,6 +18,16 @@ from app.providers.base import ProviderError
 from app.db.session import get_session
 from app.db import repo as dbrepo
 
+from datetime import datetime, timezone
+
+today_utc = datetime.now(timezone.utc).strftime("%B %d, %Y")
+meta = {
+    "query_id": str(query_uuid),
+    "session_id": session_id,
+    "features": features,
+    "plan": plan,
+    "today_utc": today_utc,
+}
 
 PROVIDERS = {
     "OPENAI": OpenAIProvider(),
