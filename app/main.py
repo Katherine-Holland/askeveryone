@@ -1,25 +1,44 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 
+import httpx
+
 from app.schemas import AskRequest, AskResponse
 from app.orchestrator import run_pipeline
 from app.config import settings
-from app.db.session import _engine
+from app.db.session import init_engine
 from app.db.models import Base
 
 app = FastAPI(title="AskEveryone (SQL AI)")
 
-
 def init_db():
-    if _engine is None:
+    engine = init_engine()
+    if engine is None:
         return
-    Base.metadata.create_all(bind=_engine)
+    Base.metadata.create_all(bind=engine)
+
 
 
 @app.on_event("startup")
 async def startup_event():
     # Create tables on boot (Neon)
     init_db()
+
+
+@app.get("/diagnostics/openai_ping")
+async def diagnostics_openai_ping():
+    if not settings.openai_api_key:
+        return {"ok": False, "error": "OPENAI_API_KEY not set"}
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            )
+        return {"ok": r.status_code == 200, "status_code": r.status_code, "body_excerpt": r.text[:200]}
+    except Exception as e:
+        return {"ok": False, "error": type(e).__name__, "detail": str(e)}
 
 
 @app.get("/")

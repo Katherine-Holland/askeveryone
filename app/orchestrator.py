@@ -15,7 +15,7 @@ from app.providers.huggingface_provider import HuggingFaceProvider
 from app.providers.llama_provider import LlamaProvider
 from app.providers.base import ProviderError
 
-from app.db.session import SessionLocal
+from app.db.session import get_session
 from app.db import repo as dbrepo
 
 
@@ -86,7 +86,7 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
     pre = pre_route(features, query)
 
     # DB session (optional)
-    db = SessionLocal() if SessionLocal else None
+    db = get_session()
 
     # Create initial query row in DB
     if db:

@@ -2,11 +2,33 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.config import settings
 
-def get_engine():
+_engine = None
+SessionLocal = None
+
+def init_engine():
+    """
+    Lazily initialize the SQLAlchemy engine.
+    This prevents import-time crashes on Render if env vars aren't ready.
+    Forces psycopg (psycopg3) driver via DATABASE_URL scheme: postgresql+psycopg://
+    """
+    global _engine, SessionLocal
+
+    if _engine is not None:
+        return _engine
+
     if not settings.database_url:
+        _engine = None
+        SessionLocal = None
         return None
-    return create_engine(settings.database_url, pool_pre_ping=True)
 
-_engine = get_engine()
+    # IMPORTANT: must be postgresql+psycopg://...
+    _engine = create_engine(settings.database_url, pool_pre_ping=True)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
+    return _engine
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine) if _engine else None
+def get_session():
+    if SessionLocal is None:
+        init_engine()
+    if SessionLocal is None:
+        return None
+    return SessionLocal()
