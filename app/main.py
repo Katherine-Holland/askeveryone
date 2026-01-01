@@ -1,4 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
+
 from app.schemas import AskRequest, AskResponse
 from app.orchestrator import run_pipeline
 from app.config import settings
@@ -7,19 +9,48 @@ from app.db.models import Base
 
 app = FastAPI(title="AskEveryone (SQL AI)")
 
+
 def init_db():
     if _engine is None:
         return
     Base.metadata.create_all(bind=_engine)
 
+
+@app.on_event("startup")
+async def startup_event():
+    # Create tables on boot (Neon)
+    init_db()
+
+
+@app.get("/")
+async def root():
+    return {
+        "service": "askeveryone",
+        "status": "ok",
+        "endpoints": ["/health", "/ask", "/diagnostics/providers"]
+    }
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)
+
+
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest):
-    result = await run_pipeline(query=req.query, session_id=req.session_id)
-    return AskResponse(**result)
+    try:
+        result = await run_pipeline(query=req.query, session_id=req.session_id)
+        return AskResponse(**result)
+    except Exception as e:
+        # Temporary: show the error message for debugging.
+        # Later, replace with a generic message + internal logging.
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/health")
 async def health():
     return {"ok": True}
+
 
 @app.get("/diagnostics/providers")
 async def diagnostics_providers():
@@ -64,4 +95,3 @@ async def diagnostics_providers():
             "database_url_set": bool(settings.database_url),
         }
     }
-
