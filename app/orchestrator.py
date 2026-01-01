@@ -1,6 +1,7 @@
 import time
 import uuid
 from typing import Dict, Any, List
+from datetime import datetime, timezone
 
 from app.pre_router import extract_features, pre_route
 from app.router import route_query
@@ -18,16 +19,6 @@ from app.providers.base import ProviderError
 from app.db.session import get_session
 from app.db import repo as dbrepo
 
-from datetime import datetime, timezone
-
-today_utc = datetime.now(timezone.utc).strftime("%B %d, %Y")
-meta = {
-    "query_id": str(query_uuid),
-    "session_id": session_id,
-    "features": features,
-    "plan": plan,
-    "today_utc": today_utc,
-}
 
 PROVIDERS = {
     "OPENAI": OpenAIProvider(),
@@ -94,6 +85,9 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
 
     features = extract_features(query)
     pre = pre_route(features, query)
+
+    # Authoritative date (prevents "today" hallucinations)
+    today_utc = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
     # DB session (optional)
     db = get_session()
@@ -167,11 +161,14 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
     multi_call = bool(plan.get("multi_call", False))
 
     providers_called: List[str] = []
+
+    # IMPORTANT: meta is per-request; do not define at module scope
     meta = {
         "query_id": str(query_uuid),
         "session_id": session_id,
         "features": features,
         "plan": plan,
+        "today_utc": today_utc,
     }
 
     # Execute
