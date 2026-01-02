@@ -10,6 +10,9 @@ from app.schemas import AskRequest, AskResponse
 from app.orchestrator import run_pipeline
 from app.config import settings
 from app.db.session import init_engine, get_session
+from app.api.diagnostics import router as diagnostics_router
+from app.api.test_provider import router as test_provider_router
+
 
 # Use ONE shared Base across all models
 from app.db.base import Base
@@ -41,6 +44,8 @@ async def startup_event():
 app.include_router(chat_router)
 app.include_router(auth_router)
 app.include_router(metrics_router)
+app.include_router(diagnostics_router)
+app.include_router(test_provider_router)
 
 
 # ---------- Diagnostics ----------
