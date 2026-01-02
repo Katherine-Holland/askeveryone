@@ -1,15 +1,28 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
-
 import httpx
+import uuid
+
+from sqlalchemy import text
 
 from app.schemas import AskRequest, AskResponse
 from app.orchestrator import run_pipeline
 from app.config import settings
-from app.db.session import init_engine
-from app.db.models import Base
+from app.db.session import init_engine, get_session
 
-app = FastAPI(title="AskEveryone (SQL AI)")
+# Use ONE shared Base across all models
+from app.db.base import Base
+
+# IMPORTANT: import model modules so Base.metadata knows about all tables
+import app.db.models          # existing (queries/provider_calls etc.)
+import app.db.models_auth     # new (users/chat_sessions/messages/magic_links)
+
+# Mount API routers
+from app.api.chat import router as chat_router
+from app.api.auth import router as auth_router
+
+app = FastAPI(title="AskEveryone (Seekle backend)")
+
 
 def init_db():
     engine = init_engine()
@@ -18,13 +31,17 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
 
-
 @app.on_event("startup")
 async def startup_event():
-    # Create tables on boot (Neon)
     init_db()
 
 
+# ---------- Routers ----------
+app.include_router(chat_router)
+app.include_router(auth_router)
+
+
+# ---------- Diagnostics ----------
 @app.get("/diagnostics/openai_ping")
 async def diagnostics_openai_ping():
     if not settings.openai_api_key:
@@ -46,7 +63,14 @@ async def root():
     return {
         "service": "askeveryone",
         "status": "ok",
-        "endpoints": ["/health", "/ask", "/diagnostics/providers"]
+        "endpoints": [
+            "/health",
+            "/ask",
+            "/chat/start",
+            "/auth/request-link",
+            "/auth/verify",
+            "/diagnostics/providers",
+        ],
     }
 
 
@@ -55,15 +79,65 @@ async def favicon():
     return Response(status_code=204)
 
 
+# ---------- Core endpoint ----------
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest):
+    db = None
     try:
+        db = get_session()
+
+        if db and req.session_id:
+            # Ensure session exists even if /chat/start wasn't called
+            db.execute(
+                text(
+                    "insert into chat_sessions (session_id, is_anonymous) "
+                    "values (:sid, true) on conflict (session_id) do nothing"
+                ),
+                {"sid": req.session_id},
+            )
+
+            # Log user message
+            db.execute(
+                text(
+                    "insert into messages (message_id, session_id, role, content) "
+                    "values (:mid, :sid, :role, :content)"
+                ),
+                {
+                    "mid": uuid.uuid4(),
+                    "sid": req.session_id,
+                    "role": "user",
+                    "content": req.query,
+                },
+            )
+            db.commit()
+
+        # Run pipeline (router/provider/ranker + query/provider_call logging)
         result = await run_pipeline(query=req.query, session_id=req.session_id)
+
+        # Log assistant message
+        if db and req.session_id:
+            db.execute(
+                text(
+                    "insert into messages (message_id, session_id, role, content) "
+                    "values (:mid, :sid, :role, :content)"
+                ),
+                {
+                    "mid": uuid.uuid4(),
+                    "sid": req.session_id,
+                    "role": "assistant",
+                    "content": result.get("answer", ""),
+                },
+            )
+            db.commit()
+
         return AskResponse(**result)
+
     except Exception as e:
-        # Temporary: show the error message for debugging.
-        # Later, replace with a generic message + internal logging.
         raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        if db:
+            db.close()
 
 
 @app.get("/health")
@@ -112,5 +186,5 @@ async def diagnostics_providers():
         },
         "DATABASE": {
             "database_url_set": bool(settings.database_url),
-        }
+        },
     }
