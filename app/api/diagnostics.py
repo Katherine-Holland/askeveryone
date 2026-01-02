@@ -86,3 +86,42 @@ async def diagnostics_claude_models():
         }
     except Exception as e:
         return {"ok": False, "error": type(e).__name__, "detail": str(e)}
+
+@router.get("/diagnostics/gemini_ping")
+async def diagnostics_gemini_ping():
+    if not settings.gemini_api_key:
+        return {"ok": False, "error": "GEMINI_API_KEY not set"}
+
+    base_url = (settings.gemini_base_url or "https://generativelanguage.googleapis.com").rstrip("/")
+    model = settings.gemini_model or "gemini-1.5-pro"
+
+    # List models and confirm configured model exists
+    url = f"{base_url}/v1beta/models"
+    params = {"key": settings.gemini_api_key}
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.get(url, params=params)
+
+        ok = r.status_code == 200
+        excerpt = r.text[:250]
+
+        model_found = None
+        if ok:
+            try:
+                data = r.json()
+                names = [m.get("name") for m in data.get("models", []) if m.get("name")]
+                # names look like "models/gemini-1.5-pro"
+                model_found = f"models/{model}" in names
+            except Exception:
+                model_found = None
+
+        return {
+            "ok": ok,
+            "status_code": r.status_code,
+            "configured_model": model,
+            "configured_model_found": model_found,
+            "body_excerpt": excerpt,
+        }
+    except Exception as e:
+        return {"ok": False, "error": type(e).__name__, "detail": str(e)}
