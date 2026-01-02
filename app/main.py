@@ -5,6 +5,7 @@ import uuid
 
 from sqlalchemy import text
 
+from app.api.metrics import router as metrics_router
 from app.schemas import AskRequest, AskResponse
 from app.orchestrator import run_pipeline
 from app.config import settings
@@ -39,6 +40,7 @@ async def startup_event():
 # ---------- Routers ----------
 app.include_router(chat_router)
 app.include_router(auth_router)
+app.include_router(metrics_router)
 
 
 # ---------- Diagnostics ----------
