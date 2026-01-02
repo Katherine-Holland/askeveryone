@@ -51,3 +51,38 @@ async def diagnostics_claude_ping():
         return {"ok": r.status_code == 200, "status_code": r.status_code, "body_excerpt": r.text[:200]}
     except Exception as e:
         return {"ok": False, "error": type(e).__name__, "detail": str(e)}
+
+@router.get("/diagnostics/claude_models")
+async def diagnostics_claude_models():
+    """
+    Lists Anthropic models available to the configured API key.
+    Safe: returns IDs only (no keys).
+    """
+    if not settings.anthropic_api_key:
+        return {"ok": False, "error": "ANTHROPIC_API_KEY not set"}
+
+    base_url = (settings.anthropic_base_url or "https://api.anthropic.com").rstrip("/")
+    url = f"{base_url}/v1/models"
+
+    headers = {
+        "x-api-key": settings.anthropic_api_key,
+        "anthropic-version": "2023-06-01",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.get(url, headers=headers)
+
+        if r.status_code != 200:
+            return {"ok": False, "status_code": r.status_code, "body_excerpt": r.text[:300]}
+
+        data = r.json()
+        ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
+        return {
+            "ok": True,
+            "count": len(ids),
+            "configured_model": settings.anthropic_model,
+            "ids": ids[:50],  # cap output
+        }
+    except Exception as e:
+        return {"ok": False, "error": type(e).__name__, "detail": str(e)}
