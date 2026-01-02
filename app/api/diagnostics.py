@@ -93,9 +93,8 @@ async def diagnostics_gemini_ping():
         return {"ok": False, "error": "GEMINI_API_KEY not set"}
 
     base_url = (settings.gemini_base_url or "https://generativelanguage.googleapis.com").rstrip("/")
-    model = settings.gemini_model or "gemini-1.5-pro"
+    configured = settings.gemini_model or "gemini-1.5-pro"
 
-    # List models and confirm configured model exists
     url = f"{base_url}/v1beta/models"
     params = {"key": settings.gemini_api_key}
 
@@ -103,25 +102,37 @@ async def diagnostics_gemini_ping():
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.get(url, params=params)
 
-        ok = r.status_code == 200
-        excerpt = r.text[:250]
+        if r.status_code != 200:
+            return {"ok": False, "status_code": r.status_code, "body_excerpt": r.text[:300]}
 
-        model_found = None
-        if ok:
-            try:
-                data = r.json()
-                names = [m.get("name") for m in data.get("models", []) if m.get("name")]
-                # names look like "models/gemini-1.5-pro"
-                model_found = f"models/{model}" in names
-            except Exception:
-                model_found = None
+        data = r.json()
+        models = data.get("models", [])
+
+        # names are like "models/gemini-..."
+        names = [m.get("name") for m in models if m.get("name")]
+
+        # supportedGenerationMethods may exist (best signal)
+        gen_models = []
+        for m in models:
+            methods = m.get("supportedGenerationMethods") or []
+            if "generateContent" in methods:
+                gen_models.append(m.get("name"))
+
+        configured_full = f"models/{configured}"
+        configured_found = configured_full in names
+        configured_supports_generate = configured_full in gen_models
+
+        # Return a helpful shortlist (strip "models/" prefix)
+        gen_short = [(n or "").replace("models/", "") for n in gen_models[:25]]
 
         return {
-            "ok": ok,
-            "status_code": r.status_code,
-            "configured_model": model,
-            "configured_model_found": model_found,
-            "body_excerpt": excerpt,
+            "ok": True,
+            "status_code": 200,
+            "configured_model": configured,
+            "configured_model_found": configured_found,
+            "configured_model_supports_generateContent": configured_supports_generate,
+            "generateContent_models_suggested": gen_short,
         }
+
     except Exception as e:
         return {"ok": False, "error": type(e).__name__, "detail": str(e)}
