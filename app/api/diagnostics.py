@@ -143,36 +143,30 @@ async def diagnostics_perplexity_ping():
         return {"ok": False, "error": "PERPLEXITY_API_KEY not set"}
 
     base_url = (settings.perplexity_base_url or "https://api.perplexity.ai").rstrip("/")
-    url = f"{base_url}/models"
+    url = f"{base_url}/chat/completions"
+    model = settings.perplexity_model or "sonar-pro"
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Pong"}],
+        "temperature": 0.0,
+    }
 
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(url, headers={"Authorization": f"Bearer {settings.perplexity_api_key}"})
+            r = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {settings.perplexity_api_key}", "Content-Type": "application/json"},
+                json=payload,
+            )
 
         ok = r.status_code == 200
-        excerpt = r.text[:250]
-
-        configured = settings.perplexity_model or "sonar-pro"
-        configured_found = None
-
-        if ok:
-            try:
-                data = r.json()
-                # Perplexity returns list-like models; normalize ids
-                ids = []
-                if isinstance(data, dict) and "data" in data:
-                    ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
-                elif isinstance(data, list):
-                    ids = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
-                configured_found = configured in ids if ids else None
-            except Exception:
-                configured_found = None
+        excerpt = r.text[:200]
 
         return {
             "ok": ok,
             "status_code": r.status_code,
-            "configured_model": configured,
-            "configured_model_found": configured_found,
+            "configured_model": model,
             "body_excerpt": excerpt,
         }
     except Exception as e:
