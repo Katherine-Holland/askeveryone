@@ -21,10 +21,17 @@ class ClaudeProvider(BaseProvider):
             "If unsure about a time-sensitive fact, say you're not sure and suggest checking sources."
         )
 
-        # Anthropic uses "messages" with "content" blocks
+        # ✅ Max tokens comes from orchestrator meta, with a safe default fallback
+        max_tokens = int(meta.get("max_tokens") or 800)
+        # Avoid silly values that can break requests
+        if max_tokens < 64:
+            max_tokens = 64
+        if max_tokens > 4000:
+            max_tokens = 4000
+
         payload = {
             "model": settings.anthropic_model,
-            "max_tokens": 800,
+            "max_tokens": max_tokens,   # ✅ UPDATED
             "temperature": 0.4,
             "system": system_prompt,
             "messages": [
@@ -44,7 +51,6 @@ class ClaudeProvider(BaseProvider):
                 r.raise_for_status()
                 data = r.json()
 
-            # content is list of blocks; return concatenated text blocks
             parts = []
             for block in data.get("content", []):
                 if block.get("type") == "text":

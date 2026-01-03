@@ -18,14 +18,21 @@ class GeminiProvider(BaseProvider):
         url = f"{base_url}/v1beta/models/{model}:generateContent"
         params = {"key": settings.gemini_api_key}
 
-        today = meta.get("today_utc")
+        today = meta.get("today_utc", "unknown")
         system_text = (
             "You are Seekle (Ask Everyone). Answer the user clearly and helpfully.\n"
             f"Today's date (UTC) is {today}. If the user asks for today's date, use that.\n"
             "If unsure about a time-sensitive fact, say you're not sure and suggest checking sources."
         )
 
-        # Gemini schema: contents -> parts
+        # ✅ Max tokens from orchestrator meta (Gemini uses maxOutputTokens)
+        max_tokens = int(meta.get("max_tokens") or 800)
+        if max_tokens < 64:
+            max_tokens = 64
+        # Gemini max varies by model; 4096 is a safe-ish upper bound for output caps.
+        if max_tokens > 4096:
+            max_tokens = 4096
+
         payload = {
             "contents": [
                 {
@@ -35,7 +42,7 @@ class GeminiProvider(BaseProvider):
             ],
             "generationConfig": {
                 "temperature": 0.4,
-                "maxOutputTokens": 800,
+                "maxOutputTokens": max_tokens,  # ✅ UPDATED
             },
         }
 
@@ -45,7 +52,6 @@ class GeminiProvider(BaseProvider):
                 r.raise_for_status()
                 data = r.json()
 
-            # Parse text from candidates[0].content.parts[*].text
             candidates = data.get("candidates") or []
             if not candidates:
                 raise ProviderError(f"Gemini empty candidates: {str(data)[:200]}")
@@ -56,7 +62,6 @@ class GeminiProvider(BaseProvider):
             answer = "".join(texts).strip()
 
             if not answer:
-                # Sometimes Gemini returns finishReason/safety blocks with no text
                 raise ProviderError(f"Gemini returned no text: {str(data)[:200]}")
 
             return answer

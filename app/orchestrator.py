@@ -1,6 +1,7 @@
 import time
 import uuid
 from typing import Dict, Any, List
+
 from datetime import datetime, timezone
 
 from app.pre_router import extract_features, pre_route
@@ -19,6 +20,8 @@ from app.providers.base import ProviderError
 from app.db.session import get_session
 from app.db import repo as dbrepo
 
+from app.limits import cooldown_provider, is_provider_available
+
 
 PROVIDERS = {
     "OPENAI": OpenAIProvider(),
@@ -29,6 +32,17 @@ PROVIDERS = {
     "LLAMA": LlamaProvider(),
     "HUGGINGFACE": HuggingFaceProvider(),
 }
+
+
+def _is_rate_limit_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return (
+        "429" in msg
+        or "rate limit" in msg
+        or "quota" in msg
+        or "too many requests" in msg
+        or "resource exhausted" in msg
+    )
 
 
 async def call_provider(provider_name: str, query: str, intent: str, meta: Dict[str, Any]) -> str:
@@ -79,34 +93,42 @@ async def call_provider_logged(db, query_uuid, provider_name: str, query: str, i
         raise
 
 
-async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
+# ✅ Step 11: updated signature
+async def run_pipeline(
+    query: str,
+    session_id: str | None,
+    user_id=None,
+    compare: bool = False,
+    max_tokens: int = 500,
+) -> Dict[str, Any]:
     t0 = time.perf_counter()
     query_uuid = uuid.uuid4()
 
     features = extract_features(query)
     pre = pre_route(features, query)
 
-    # Authoritative date (prevents "today" hallucinations)
-    today_utc = datetime.now(timezone.utc).strftime("%B %d, %Y")
-
     # DB session (optional)
     db = get_session()
 
-    # Create initial query row in DB
+    # Create initial query row in DB (if you added user_id column, pass it; otherwise ignore)
     if db:
-        dbrepo.create_query(
-            db,
-            query_id=query_uuid,
-            session_id=session_id,
-            query_text=query,
-            response_mode="text",
-            features_json=features,
-            pre_intent_hint=pre.get("pre_intent_hint"),
-        )
+        try:
+            dbrepo.create_query(
+                db,
+                query_id=query_uuid,
+                session_id=session_id,
+                query_text=query,
+                response_mode="text",
+                features_json=features,
+                pre_intent_hint=pre.get("pre_intent_hint"),
+            )
+        except Exception:
+            # don't block pipeline if logging schema differs
+            pass
 
     # Decide routing plan
-    if pre["short_circuit"]:
-        intent_hint = pre["pre_intent_hint"]
+    if pre.get("short_circuit"):
+        intent_hint = pre.get("pre_intent_hint")
 
         if intent_hint == "LIVE_FRESH":
             plan = {
@@ -116,7 +138,7 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
                 "provider_fallbacks": ["GEMINI", "OPENAI"],
                 "confidence": 0.75,
                 "multi_call": True,
-                "reason_codes": pre["pre_reason_codes"],
+                "reason_codes": pre.get("pre_reason_codes", []),
             }
         elif intent_hint == "WEB_RESEARCH_CITATIONS":
             plan = {
@@ -126,27 +148,27 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
                 "provider_fallbacks": ["OPENAI", "CLAUDE"],
                 "confidence": 0.78,
                 "multi_call": True,
-                "reason_codes": pre["pre_reason_codes"],
+                "reason_codes": pre.get("pre_reason_codes", []),
             }
         elif intent_hint == "LOCAL_NEAR_ME":
             plan = {
                 "intent": intent_hint,
                 "provider_primary": "PERPLEXITY",
-                "provider_secondary": "GEMINI" if pre["pre_multi_call_hint"] else None,
+                "provider_secondary": "GEMINI" if pre.get("pre_multi_call_hint") else None,
                 "provider_fallbacks": ["OPENAI"],
                 "confidence": 0.72,
-                "multi_call": bool(pre["pre_multi_call_hint"]),
-                "reason_codes": pre["pre_reason_codes"],
+                "multi_call": bool(pre.get("pre_multi_call_hint")),
+                "reason_codes": pre.get("pre_reason_codes", []),
             }
         elif intent_hint == "CODING_TECH":
             plan = {
                 "intent": intent_hint,
                 "provider_primary": "OPENAI",
-                "provider_secondary": "CLAUDE" if pre["pre_multi_call_hint"] else None,
+                "provider_secondary": "CLAUDE" if pre.get("pre_multi_call_hint") else None,
                 "provider_fallbacks": ["LLAMA", "HUGGINGFACE"],
                 "confidence": 0.80,
-                "multi_call": bool(pre["pre_multi_call_hint"]),
-                "reason_codes": pre["pre_reason_codes"],
+                "multi_call": bool(pre.get("pre_multi_call_hint")),
+                "reason_codes": pre.get("pre_reason_codes", []),
             }
         else:
             plan = await route_query(query, features)
@@ -160,53 +182,80 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
     confidence = float(plan.get("confidence", 0.5))
     multi_call = bool(plan.get("multi_call", False))
 
+    # ✅ Step 11: hard rule — multi-call only if user explicitly requested compare
+    if not compare:
+        multi_call = False
+
     providers_called: List[str] = []
 
-    # IMPORTANT: meta is per-request; do not define at module scope
+    # ✅ Inject today + tokens into meta for ALL providers
+    today_utc = datetime.now(timezone.utc).strftime("%B %d, %Y")
     meta = {
         "query_id": str(query_uuid),
         "session_id": session_id,
+        "user_id": str(user_id) if user_id else None,
         "features": features,
         "plan": plan,
         "today_utc": today_utc,
+        "max_tokens": int(max_tokens),
+        "compare": bool(compare),
     }
 
-    # Execute
+    # -------------------
+    # Single call + fallbacks
+    # -------------------
     if not multi_call:
         answer = None
         provider_used = "NONE"
+        errors: List[str] = []
 
         for p in [provider_primary] + fallbacks:
+            # ✅ Step 12: skip providers on cooldown
+            if not is_provider_available(p):
+                continue
+
             try:
                 providers_called.append(p)
                 answer = await call_provider_logged(db, query_uuid, p, query, intent, meta)
                 provider_used = p
                 break
-            except ProviderError:
+
+            except ProviderError as e:
+                errors.append(f"{p}:{type(e).__name__}")
+                # ✅ Step 12: cooldown on 429/quota
+                if _is_rate_limit_error(e):
+                    cooldown_provider(p, minutes=10)
                 continue
-            except Exception:
+
+            except Exception as e:
+                errors.append(f"{p}:{type(e).__name__}")
+                if _is_rate_limit_error(e):
+                    cooldown_provider(p, minutes=10)
                 continue
 
         if answer is None:
-            answer = "Sorry — providers are not configured yet."
+            answer = "Sorry — providers are not configured or are temporarily unavailable."
 
         latency_total_ms = int((time.perf_counter() - t0) * 1000)
 
         # Update query row
         if db:
-            dbrepo.update_query_result(
-                db,
-                query_id=query_uuid,
-                router_intent=intent,
-                router_confidence=confidence,
-                multi_call=multi_call,
-                providers_called_json=providers_called,
-                provider_used_final=provider_used,
-                latency_total_ms=latency_total_ms,
-                token_cost_estimate_usd=None,
-                answered=True,
-                meta_json={"features": features, "router": plan},
-            )
+            try:
+                dbrepo.update_query_result(
+                    db,
+                    query_id=query_uuid,
+                    router_intent=intent,
+                    router_confidence=confidence,
+                    multi_call=multi_call,
+                    providers_called_json=providers_called,
+                    provider_used_final=provider_used,
+                    latency_total_ms=latency_total_ms,
+                    token_cost_estimate_usd=None,
+                    answered=True,
+                    meta_json={"features": features, "router": plan, "errors": errors},
+                )
+            except Exception:
+                pass
             db.close()
 
         return {
@@ -220,7 +269,9 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
             "meta": {"features": features, "router": plan},
         }
 
-    # Multi-call: call top 2 then rank
+    # -------------------
+    # Multi-call (compare) top 2 then rank
+    # -------------------
     a_provider = provider_primary
     b_provider = provider_secondary or (fallbacks[0] if fallbacks else provider_primary)
 
@@ -228,15 +279,39 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
     ans_b = ""
     errors: List[str] = []
 
+    # If a/b on cooldown, try to swap in fallbacks
+    provider_pool = [a_provider, b_provider] + [p for p in fallbacks if p not in [a_provider, b_provider]]
+
+    chosen: List[str] = []
+    for p in provider_pool:
+        if is_provider_available(p) and p not in chosen:
+            chosen.append(p)
+        if len(chosen) == 2:
+            break
+
+    if len(chosen) == 0:
+        chosen = [a_provider]
+    if len(chosen) == 1:
+        chosen = [chosen[0], b_provider]
+
+    a_provider, b_provider = chosen[0], chosen[1]
+
     for p, slot in [(a_provider, "A"), (b_provider, "B")]:
+        if not is_provider_available(p):
+            errors.append(f"{p}:COOLDOWN")
+            continue
+
         try:
             providers_called.append(p)
             if slot == "A":
                 ans_a = await call_provider_logged(db, query_uuid, p, query, intent, meta)
             else:
                 ans_b = await call_provider_logged(db, query_uuid, p, query, intent, meta)
+
         except Exception as e:
             errors.append(f"{p}:{type(e).__name__}")
+            if _is_rate_limit_error(e):
+                cooldown_provider(p, minutes=10)
 
     citations_requested = bool(features.get("citations", False))
 
@@ -248,19 +323,22 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
         latency_total_ms = int((time.perf_counter() - t0) * 1000)
 
         if db:
-            dbrepo.update_query_result(
-                db,
-                query_id=query_uuid,
-                router_intent=intent,
-                router_confidence=confidence,
-                multi_call=multi_call,
-                providers_called_json=providers_called,
-                provider_used_final=provider_used,
-                latency_total_ms=latency_total_ms,
-                token_cost_estimate_usd=None,
-                answered=True,
-                meta_json={"features": features, "router": plan, "ranker": ranked, "errors": errors},
-            )
+            try:
+                dbrepo.update_query_result(
+                    db,
+                    query_id=query_uuid,
+                    router_intent=intent,
+                    router_confidence=confidence,
+                    multi_call=multi_call,
+                    providers_called_json=providers_called,
+                    provider_used_final=provider_used,
+                    latency_total_ms=latency_total_ms,
+                    token_cost_estimate_usd=None,
+                    answered=True,
+                    meta_json={"features": features, "router": plan, "ranker": ranked, "errors": errors},
+                )
+            except Exception:
+                pass
             db.close()
 
         return {
@@ -275,25 +353,28 @@ async def run_pipeline(query: str, session_id: str | None) -> Dict[str, Any]:
         }
 
     # Fallback if multi-call failed
-    fallback_answer = ans_a or ans_b or "Sorry — providers are not configured yet."
+    fallback_answer = ans_a or ans_b or "Sorry — providers are not configured or are temporarily unavailable."
     provider_used = a_provider if ans_a else b_provider if ans_b else "NONE"
 
     latency_total_ms = int((time.perf_counter() - t0) * 1000)
 
     if db:
-        dbrepo.update_query_result(
-            db,
-            query_id=query_uuid,
-            router_intent=intent,
-            router_confidence=confidence,
-            multi_call=multi_call,
-            providers_called_json=providers_called,
-            provider_used_final=provider_used,
-            latency_total_ms=latency_total_ms,
-            token_cost_estimate_usd=None,
-            answered=True,
-            meta_json={"features": features, "router": plan, "errors": errors},
-        )
+        try:
+            dbrepo.update_query_result(
+                db,
+                query_id=query_uuid,
+                router_intent=intent,
+                router_confidence=confidence,
+                multi_call=multi_call,
+                providers_called_json=providers_called,
+                provider_used_final=provider_used,
+                latency_total_ms=latency_total_ms,
+                token_cost_estimate_usd=None,
+                answered=True,
+                meta_json={"features": features, "router": plan, "errors": errors},
+            )
+        except Exception:
+            pass
         db.close()
 
     return {

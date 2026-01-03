@@ -14,7 +14,7 @@ class PerplexityProvider(BaseProvider):
         base_url = (settings.perplexity_base_url or "https://api.perplexity.ai").rstrip("/")
         url = f"{base_url}/chat/completions"
 
-        today = meta.get("today_utc")
+        today = meta.get("today_utc", "unknown")
         want_citations = bool(meta.get("features", {}).get("citations", False)) or (
             intent == "WEB_RESEARCH_CITATIONS"
         )
@@ -26,6 +26,14 @@ class PerplexityProvider(BaseProvider):
             + ("Include citations/links when helpful." if want_citations else "")
         )
 
+        # ✅ Max tokens from orchestrator meta
+        max_tokens = int(meta.get("max_tokens") or 800)
+        if max_tokens < 64:
+            max_tokens = 64
+        # Perplexity Sonar models are happy well below this
+        if max_tokens > 4000:
+            max_tokens = 4000
+
         payload = {
             "model": settings.perplexity_model or "sonar-pro",
             "messages": [
@@ -33,6 +41,7 @@ class PerplexityProvider(BaseProvider):
                 {"role": "user", "content": query},
             ],
             "temperature": 0.3,
+            "max_tokens": max_tokens,  # ✅ UPDATED
         }
 
         headers = {
@@ -46,8 +55,8 @@ class PerplexityProvider(BaseProvider):
                 r.raise_for_status()
                 data = r.json()
 
-            # OpenAI-style
-            return data["choices"][0]["message"]["content"]
+            # OpenAI-style response
+            return data["choices"][0]["message"]["content"].strip()
 
         except httpx.HTTPStatusError as e:
             status = e.response.status_code

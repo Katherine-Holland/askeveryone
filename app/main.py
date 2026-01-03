@@ -12,14 +12,20 @@ from app.config import settings
 from app.db.session import init_engine, get_session
 from app.api.diagnostics import router as diagnostics_router
 from app.api.test_provider import router as test_provider_router
+from app.api.billing import router as billing_router
+app.include_router(billing_router)
 
+# NEW: limits + billing
+from app.limits import daily_limit_for_user, max_tokens_for_tier
+from app.db import billing_repo
 
 # Use ONE shared Base across all models
 from app.db.base import Base
 
 # IMPORTANT: import model modules so Base.metadata knows about all tables
-import app.db.models          # existing (queries/provider_calls etc.)
-import app.db.models_auth     # new (users/chat_sessions/messages/magic_links)
+import app.db.models          # queries/provider_calls
+import app.db.models_auth     # users/chat_sessions/messages/magic_links (+ billing models if you add them later)
+import app.db.models_billing
 
 # Mount API routers
 from app.api.chat import router as chat_router
@@ -93,8 +99,8 @@ async def ask(req: AskRequest):
     try:
         db = get_session()
 
+        # 1) Ensure session exists (even if /chat/start not called)
         if db and req.session_id:
-            # Ensure session exists even if /chat/start wasn't called
             db.execute(
                 text(
                     "insert into chat_sessions (session_id, is_anonymous) "
@@ -102,8 +108,64 @@ async def ask(req: AskRequest):
                 ),
                 {"sid": req.session_id},
             )
+            db.commit()
 
-            # Log user message
+        # 2) Resolve user_id from session (claimed sessions have user_id)
+        user_id = None
+        is_paid = False
+
+        if db and req.session_id:
+            row = db.execute(
+                text("select user_id from chat_sessions where session_id=:sid"),
+                {"sid": req.session_id},
+            ).fetchone()
+            user_id = row[0] if row and row[0] else None
+
+        # 3) Enforce login for “5 free queries/day”
+        # (Anonymous can still chat if you want, but you asked: logged-in required for free 5)
+        if user_id is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Please log in with email to use the free daily queries.",
+            )
+
+        # 4) Ensure billing rows exist + determine plan
+        billing_repo.ensure_wallet_and_plan(db, user_id)
+        plan = billing_repo.get_user_plan(db, user_id)
+        is_paid = plan == "paid"
+
+        # 5) Daily cap (paid still capped until we trust patterns)
+        used_24h = billing_repo.count_queries_last_24h(db, user_id=user_id)
+        limit_24h = daily_limit_for_user(is_paid=is_paid)
+
+        if used_24h >= limit_24h:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Daily query limit reached ({limit_24h}/24h). Try again tomorrow.",
+            )
+
+        # 6) Credits logic (free tier: first N/day free; then credits required)
+        require_credits = False
+        credits_to_spend = settings.credits_per_query
+
+        if not is_paid and used_24h >= settings.free_daily_limit:
+            require_credits = True
+
+        if require_credits:
+            ok = billing_repo.spend_credits(
+                db,
+                user_id=user_id,
+                amount=credits_to_spend,
+                reason="query",
+            )
+            if not ok:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Out of credits. Please purchase more to continue.",
+                )
+
+        # 7) Log user message
+        if db and req.session_id:
             db.execute(
                 text(
                     "insert into messages (message_id, session_id, role, content) "
@@ -118,10 +180,16 @@ async def ask(req: AskRequest):
             )
             db.commit()
 
-        # Run pipeline (router/provider/ranker + query/provider_call logging)
-        result = await run_pipeline(query=req.query, session_id=req.session_id)
+        # 8) Run pipeline with token cap and optional compare
+        result = await run_pipeline(
+            query=req.query,
+            session_id=req.session_id,
+            user_id=user_id,
+            compare=bool(getattr(req, "compare", False)),
+            max_tokens=max_tokens_for_tier(is_paid=is_paid),
+        )
 
-        # Log assistant message
+        # 9) Log assistant message
         if db and req.session_id:
             db.execute(
                 text(
@@ -139,9 +207,10 @@ async def ask(req: AskRequest):
 
         return AskResponse(**result)
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
     finally:
         if db:
             db.close()
@@ -191,7 +260,5 @@ async def diagnostics_providers():
             "base_url": settings.huggingface_base_url,
             "model": settings.huggingface_model,
         },
-        "DATABASE": {
-            "database_url_set": bool(settings.database_url),
-        },
+        "DATABASE": {"database_url_set": bool(settings.database_url)},
     }

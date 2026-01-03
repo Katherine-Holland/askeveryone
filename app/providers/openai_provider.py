@@ -21,6 +21,13 @@ class OpenAIProvider(BaseProvider):
             "If you are unsure, say you are not sure rather than guessing."
         )
 
+        # ✅ Max tokens comes from orchestrator meta, with safe bounds
+        max_tokens = int(meta.get("max_tokens") or 800)
+        if max_tokens < 64:
+            max_tokens = 64
+        if max_tokens > 4000:
+            max_tokens = 4000
+
         payload = {
             "model": settings.openai_answer_model,
             "messages": [
@@ -28,6 +35,7 @@ class OpenAIProvider(BaseProvider):
                 {"role": "user", "content": query},
             ],
             "temperature": 0.4,
+            "max_tokens": max_tokens,  # ✅ UPDATED
         }
 
         async with httpx.AsyncClient(timeout=45.0) as client:
@@ -40,7 +48,6 @@ class OpenAIProvider(BaseProvider):
                 json=payload,
             )
 
-            # Raise with body if something ever goes wrong again
             if r.status_code >= 400:
                 raise ProviderError(f"{r.status_code} {r.text}")
 
