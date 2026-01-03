@@ -136,3 +136,44 @@ async def diagnostics_gemini_ping():
 
     except Exception as e:
         return {"ok": False, "error": type(e).__name__, "detail": str(e)}
+
+@router.get("/diagnostics/perplexity_ping")
+async def diagnostics_perplexity_ping():
+    if not settings.perplexity_api_key:
+        return {"ok": False, "error": "PERPLEXITY_API_KEY not set"}
+
+    base_url = (settings.perplexity_base_url or "https://api.perplexity.ai").rstrip("/")
+    url = f"{base_url}/models"
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.get(url, headers={"Authorization": f"Bearer {settings.perplexity_api_key}"})
+
+        ok = r.status_code == 200
+        excerpt = r.text[:250]
+
+        configured = settings.perplexity_model or "sonar-pro"
+        configured_found = None
+
+        if ok:
+            try:
+                data = r.json()
+                # Perplexity returns list-like models; normalize ids
+                ids = []
+                if isinstance(data, dict) and "data" in data:
+                    ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
+                elif isinstance(data, list):
+                    ids = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
+                configured_found = configured in ids if ids else None
+            except Exception:
+                configured_found = None
+
+        return {
+            "ok": ok,
+            "status_code": r.status_code,
+            "configured_model": configured,
+            "configured_model_found": configured_found,
+            "body_excerpt": excerpt,
+        }
+    except Exception as e:
+        return {"ok": False, "error": type(e).__name__, "detail": str(e)}
