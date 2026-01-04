@@ -18,6 +18,7 @@ from app.db.session import init_engine, get_session
 # limits + billing
 from app.limits import daily_limit_for_user, max_tokens_for_tier
 from app.db import billing_repo
+from app.security.anon_gate import build_anon_key, anon_allowance_used_last_24h, record_anon_use
 
 # Use ONE shared Base across all models
 from app.db.base import Base
@@ -137,11 +138,7 @@ async def root():
 # ---------- Core endpoint ----------
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest, request: Request):
-    """
-    Policy:
-    - Anonymous: 1 total EVER per session_id, ONLY if Turnstile passes.
-    - Logged-in: 5 free/day, then 1 credit/query, plus daily hard cap (anti-rinse).
-    """
+    
     db = None
     try:
         db = get_session()
@@ -180,47 +177,54 @@ async def ask(req: AskRequest, request: Request):
             _safe_rollback(db)
             user_id = None
 
-        # ---------------------------------------------------------
-        # Anonymous policy:
-        # - Requires Turnstile
-        # - 1 total EVER per session
-        # ---------------------------------------------------------
-        if user_id is None:
-            # Require Turnstile token for anonymous usage
-            turnstile_token = getattr(req, "turnstile_token", None)
-            if not turnstile_token:
-                raise HTTPException(status_code=401, detail="Turnstile required for anonymous usage.")
+                if user_id is None:
+            # New anonymous policy:
+            # - 1 free per 24h per (IP+UA) hash
+            # - plus optional: 1 total ever per session_id (extra protection)
+            ip = request.client.host if request.client else None
+            ua = request.headers.get("user-agent")
+            key_hash = build_anon_key(ip=ip, user_agent=ua)
 
-            # Use shared helper (single source of truth)
-            ts = await verify_turnstile(
-                turnstile_token,
-                ip=(request.client.host if request.client else None),
-            )
-            if not ts.ok:
-                raise HTTPException(status_code=401, detail="Turnstile verification failed.")
-
-            # 1 free EVER per session (bots can create new sessions; Turnstile mitigates)
-            try:
-                row = db.execute(
-                    text("select count(*) from queries where session_id=:sid"),
-                    {"sid": req.session_id},
-                ).fetchone()
-                used_anon_total = int(row[0]) if row else 0
-            except Exception:
-                _safe_rollback(db)
-                used_anon_total = 999  # fail-closed
-
-            if used_anon_total >= 1:
+            # Optional: extra guard — only 1 anonymous query ever per session_id
+            row = db.execute(
+                text("select count(*) from queries where session_id=:sid"),
+                {"sid": req.session_id},
+            ).fetchone()
+            used_by_session = int(row[0]) if row else 0
+            if used_by_session >= 1:
                 raise HTTPException(
                     status_code=402,
-                    detail="Anonymous users get 1 free query total. Please log in to continue.",
+                    detail="To keep Seekle safe from bots, anonymous users get 1 free search. Log in for 5 free/day.",
                 )
 
-            # Log user message (best-effort; do NOT poison DB session)
-            _insert_message(db, session_id=req.session_id, role="user", content=req.query)
+            used_anon = anon_allowance_used_last_24h(db, key_hash)
+            if used_anon >= settings.anon_free_per_24h:
+                raise HTTPException(
+                    status_code=402,
+                    detail="You’ve used your 1 free anonymous search. Log in for 5 free/day.",
+                )
 
-            # Run pipeline (anonymous treated as free tier)
-            # NOTE: pipeline will do its own DB logging using its own session
+            # Record usage immediately (fail closed if DB errors)
+            try:
+                record_anon_use(db, key_hash)
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise HTTPException(status_code=429, detail="Temporary protection triggered. Please log in.")
+
+            # Log user message (best effort)
+            try:
+                db.execute(
+                    text(
+                        "insert into messages (message_id, session_id, role, content) "
+                        "values (:mid, :sid, :role, :content)"
+                    ),
+                    {"mid": uuid.uuid4(), "sid": req.session_id, "role": "user", "content": req.query},
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+
             result = await run_pipeline(
                 query=req.query,
                 session_id=req.session_id,
@@ -229,10 +233,21 @@ async def ask(req: AskRequest, request: Request):
                 max_tokens=max_tokens_for_tier(is_paid=False),
             )
 
-            # Log assistant message
-            _insert_message(db, session_id=req.session_id, role="assistant", content=result.get("answer", ""))
+            # Log assistant message (best effort)
+            try:
+                db.execute(
+                    text(
+                        "insert into messages (message_id, session_id, role, content) "
+                        "values (:mid, :sid, :role, :content)"
+                    ),
+                    {"mid": uuid.uuid4(), "sid": req.session_id, "role": "assistant", "content": result.get("answer", "")},
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
 
             return AskResponse(**result)
+
 
         # ---------------------------------------------------------
         # Logged-in policy:

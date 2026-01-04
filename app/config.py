@@ -93,9 +93,12 @@ class Settings(BaseModel):
     stripe_secret_key: str = _env_str("STRIPE_SECRET_KEY", "")
     stripe_webhook_secret: str = _env_str("STRIPE_WEBHOOK_SECRET", "")
 
-    #turnstile secrets key
-    turnstile_secret_key: str = os.getenv("TURNSTILE_SECRET_KEY", "")
-    turnstile_site_key: str = os.getenv("TURNSTILE_SITE_KEY", "")
+    # Anonymous heuristic (no Turnstile)
+    global_free_pool_per_day: int = int(os.getenv("GLOBAL_FREE_POOL_PER_DAY", "300"))
+    global_free_pool_key: str = os.getenv("GLOBAL_FREE_POOL_KEY", "free_pool")
+    anon_free_per_24h: int = int(os.getenv("ANON_FREE_PER_24H", "1"))
+    anon_key_salt: str = os.getenv("ANON_KEY_SALT", "change-me-please")  # set in Render
+
 
 
     # Price IDs -> credits
