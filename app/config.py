@@ -93,6 +93,11 @@ class Settings(BaseModel):
     stripe_secret_key: str = _env_str("STRIPE_SECRET_KEY", "")
     stripe_webhook_secret: str = _env_str("STRIPE_WEBHOOK_SECRET", "")
 
+    #turnstile secrets key
+    turnstile_secret_key: str = os.getenv("TURNSTILE_SECRET_KEY", "")
+    turnstile_site_key: str = os.getenv("TURNSTILE_SITE_KEY", "")
+
+
     # Price IDs -> credits
     stripe_price_starter: str = _env_str("STRIPE_PRICE_STARTER", "")
     stripe_price_plus: str = _env_str("STRIPE_PRICE_PLUS", "")
