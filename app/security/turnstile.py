@@ -107,8 +107,7 @@ async def verify_turnstile(
             codes=["http-error"],
         )
 
-        )
-        
+
     except Exception as e:
         return TurnstileResult(
             ok=False,
