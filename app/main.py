@@ -5,15 +5,10 @@ import uuid
 
 from sqlalchemy import text
 
-from app.api.metrics import router as metrics_router
 from app.schemas import AskRequest, AskResponse
 from app.orchestrator import run_pipeline
 from app.config import settings
 from app.db.session import init_engine, get_session
-from app.api.diagnostics import router as diagnostics_router
-from app.api.test_provider import router as test_provider_router
-from app.api.billing import router as billing_router
-app.include_router(billing_router)
 
 # NEW: limits + billing
 from app.limits import daily_limit_for_user, max_tokens_for_tier
@@ -24,12 +19,17 @@ from app.db.base import Base
 
 # IMPORTANT: import model modules so Base.metadata knows about all tables
 import app.db.models          # queries/provider_calls
-import app.db.models_auth     # users/chat_sessions/messages/magic_links (+ billing models if you add them later)
-import app.db.models_billing
+import app.db.models_auth     # users/chat_sessions/messages/magic_links
+import app.db.models_billing  # wallets/credits/plans/etc.
 
-# Mount API routers
+# Routers
 from app.api.chat import router as chat_router
 from app.api.auth import router as auth_router
+from app.api.metrics import router as metrics_router
+from app.api.diagnostics import router as diagnostics_router
+from app.api.test_provider import router as test_provider_router
+from app.api.billing import router as billing_router
+
 
 app = FastAPI(title="AskEveryone (Seekle backend)")
 
@@ -52,6 +52,7 @@ app.include_router(auth_router)
 app.include_router(metrics_router)
 app.include_router(diagnostics_router)
 app.include_router(test_provider_router)
+app.include_router(billing_router)
 
 
 # ---------- Diagnostics ----------
@@ -122,7 +123,6 @@ async def ask(req: AskRequest):
             user_id = row[0] if row and row[0] else None
 
         # 3) Enforce login for “5 free queries/day”
-        # (Anonymous can still chat if you want, but you asked: logged-in required for free 5)
         if user_id is None:
             raise HTTPException(
                 status_code=401,
@@ -132,7 +132,7 @@ async def ask(req: AskRequest):
         # 4) Ensure billing rows exist + determine plan
         billing_repo.ensure_wallet_and_plan(db, user_id)
         plan = billing_repo.get_user_plan(db, user_id)
-        is_paid = plan == "paid"
+        is_paid = (plan == "paid")
 
         # 5) Daily cap (paid still capped until we trust patterns)
         used_24h = billing_repo.count_queries_last_24h(db, user_id=user_id)
@@ -148,7 +148,7 @@ async def ask(req: AskRequest):
         require_credits = False
         credits_to_spend = settings.credits_per_query
 
-        if not is_paid and used_24h >= settings.free_daily_limit:
+        if (not is_paid) and (used_24h >= settings.free_daily_limit):
             require_credits = True
 
         if require_credits:
