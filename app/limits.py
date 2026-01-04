@@ -1,48 +1,43 @@
+# app/limits.py
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
-# ----------------------------
-# Tier policy defaults
-# (keep these conservative; you can later move to env via config.py)
-# ----------------------------
+from app.config import settings
 
-DEFAULT_FREE_DAILY_CAP = 10       # your free tier cap (separate from "free_daily_limit" before credits kick in)
-DEFAULT_PAID_DAILY_CAP = 50       # you wanted a paid cap until patterns are trusted
-DEFAULT_FREE_MAX_TOKENS = 500
-DEFAULT_PAID_MAX_TOKENS = 900
-
+# ----------------------------
+# Tier policy (from config/env)
+# ----------------------------
 
 def daily_limit_for_user(*, is_paid: bool) -> int:
     """
-    Hard daily cap (anti-abuse). This is NOT the same as "free_daily_limit"
-    (the number of free queries before credits are required).
+    Hard daily cap (anti-abuse). NOT the same as free_daily_limit
+    (free allowance before credits are required).
     """
-    return DEFAULT_PAID_DAILY_CAP if is_paid else DEFAULT_FREE_DAILY_CAP
+    return settings.paid_daily_cap if is_paid else settings.free_daily_cap
 
 
 def max_tokens_for_tier(*, is_paid: bool) -> int:
     """
-    Max completion/output tokens per response by tier.
-    Providers should read meta["max_tokens"] and enforce if supported.
+    Max output tokens by tier. Providers should read meta["max_tokens"].
     """
-    return DEFAULT_PAID_MAX_TOKENS if is_paid else DEFAULT_FREE_MAX_TOKENS
+    return settings.max_tokens_paid if is_paid else settings.max_tokens_free
 
 
 # ----------------------------
-# Provider circuit-breaker (cooldown)
+# Provider circuit breaker (cooldown)
 # ----------------------------
 
-# provider -> available_after UTC timestamp
 _PROVIDER_COOLDOWN: Dict[str, datetime] = {}
 
-
-def cooldown_provider(provider: str, minutes: int = 10) -> None:
+def cooldown_provider(provider: str, minutes: Optional[int] = None) -> None:
     """
     Put a provider on cooldown after 429/quota/rate-limit events.
+    minutes defaults to settings.provider_cooldown_minutes.
     """
-    until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    mins = minutes if minutes is not None else getattr(settings, "provider_cooldown_minutes", 10)
+    until = datetime.now(timezone.utc) + timedelta(minutes=int(mins))
     _PROVIDER_COOLDOWN[provider] = until
 
 
