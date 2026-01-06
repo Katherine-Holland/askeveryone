@@ -116,15 +116,11 @@ def _norm_ua(ua: str | None) -> str:
 
 
 def _get_client_ip(request: Request) -> str | None:
-    """
-    Render/Cloudflare-style proxy headers:
-    - Prefer CF-Connecting-IP if present
-    - Else X-Forwarded-For (first item)
-    - Else request.client.host
-    """
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip:
-        return cf_ip.strip()
+    # Cloudflare / proxies may provide different header names
+    for hdr in ["cf-connecting-ip", "true-client-ip", "x-real-ip"]:
+        v = request.headers.get(hdr)
+        if v:
+            return v.strip()
 
     xff = request.headers.get("x-forwarded-for")
     if xff:
@@ -133,6 +129,7 @@ def _get_client_ip(request: Request) -> str | None:
             return parts[0]
 
     return request.client.host if request.client else None
+
 
 
 @app.get("/diagnostics/openai_ping")
@@ -419,4 +416,15 @@ async def diagnostics_providers():
             "model": settings.huggingface_model,
         },
         "DATABASE": {"database_url_set": bool(settings.database_url)},
+    }
+
+@app.get("/diagnostics/ip")
+async def diagnostics_ip(request: Request):
+    return {
+        "client_host": request.client.host if request.client else None,
+        "cf_connecting_ip": request.headers.get("cf-connecting-ip"),
+        "true_client_ip": request.headers.get("true-client-ip"),
+        "x_real_ip": request.headers.get("x-real-ip"),
+        "x_forwarded_for": request.headers.get("x-forwarded-for"),
+        "user_agent": request.headers.get("user-agent"),
     }
