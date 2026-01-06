@@ -116,7 +116,10 @@ def _norm_ua(ua: str | None) -> str:
 
 
 def _get_client_ip(request: Request) -> str | None:
-    # Cloudflare / proxies may provide different header names
+    """
+    Prefer Cloudflare + common proxy headers.
+    Falls back to request.client.host.
+    """
     for hdr in ["cf-connecting-ip", "true-client-ip", "x-real-ip"]:
         v = request.headers.get(hdr)
         if v:
@@ -130,6 +133,21 @@ def _get_client_ip(request: Request) -> str | None:
 
     return request.client.host if request.client else None
 
+
+def _anon_session_used_today(db, session_id: str) -> int:
+    """
+    Count anon usage for this session_id since *UTC day start*.
+    (Not a rolling 24h window.)
+    """
+    row = db.execute(
+        text(
+            "select count(*) from queries "
+            "where session_id=:sid "
+            "and received_at >= (now() at time zone 'utc')::date"
+        ),
+        {"sid": session_id},
+    ).fetchone()
+    return int(row[0]) if row else 0
 
 
 @app.get("/diagnostics/openai_ping")
@@ -173,7 +191,7 @@ async def ask(req: AskRequest, request: Request):
     - Anonymous:
         - 1 free/day per IP+UA hash
         - AND global anonymous pool 200/day
-        - AND (recommended) 1 free/day per session_id (extra anti-bot)
+        - AND 1 free/day per session_id (extra anti-bot)
     - Logged-in:
         - 5 free/day
         - then credits/subscription
@@ -228,27 +246,20 @@ async def ask(req: AskRequest, request: Request):
             anon_global_cap = int(getattr(settings, "anon_global_pool_per_day", 200))
             anon_key_cap = int(getattr(settings, "anon_free_per_24h", 1))
 
-            # 0) Extra guard: 1/day per session_id (recommended)
+            # 0) Extra guard: 1/day per session_id (UTC day boundary)
             try:
-                row = db.execute(
-                    text(
-                        "select count(*) from queries "
-                        "where session_id=:sid and received_at >= (now() - interval '24 hours')"
-                    ),
-                    {"sid": req.session_id},
-                ).fetchone()
-                used_session_24h = int(row[0]) if row else 0
+                used_session_today = _anon_session_used_today(db, req.session_id)
             except Exception:
                 _safe_rollback(db)
-                used_session_24h = 10**9  # fail-closed
+                used_session_today = 10**9  # fail-closed
 
-            if used_session_24h >= 1:
+            if used_session_today >= 1:
                 raise HTTPException(
                     status_code=402,
                     detail="Create a free account to save your conversation and continue searching.",
                 )
 
-            # 1) Global pool cap
+            # 1) Global pool cap (UTC day)
             try:
                 used_global = anon_global_used_today(db)
             except Exception:
@@ -261,7 +272,7 @@ async def ask(req: AskRequest, request: Request):
                     detail="Free access is busy right now. Create a free account to continue and save your conversation.",
                 )
 
-            # 2) Per-key 1/day
+            # 2) Per-key 1/day (UTC day)
             try:
                 used_key = anon_allowance_used_today(db, key_hash)
             except Exception:
@@ -417,6 +428,7 @@ async def diagnostics_providers():
         },
         "DATABASE": {"database_url_set": bool(settings.database_url)},
     }
+
 
 @app.get("/diagnostics/ip")
 async def diagnostics_ip(request: Request):
