@@ -108,6 +108,28 @@ def _insert_message(db, *, session_id: str, role: str, content: str) -> None:
         _safe_rollback(db)
 
 
+def _get_client_ip(request: Request) -> str | None:
+    """
+    Render sits behind proxies. Prefer forwarded headers when present.
+    """
+    # Typical proxy chain header: "client, proxy1, proxy2"
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+
+    # Some setups use CF-Connecting-IP; keep as fallback
+    ccip = request.headers.get("cf-connecting-ip")
+    if ccip:
+        ccip = ccip.strip()
+        if ccip:
+            return ccip
+
+    # Last resort
+    return request.client.host if request.client else None
+
+
 @app.get("/diagnostics/openai_ping")
 async def diagnostics_openai_ping():
     if not settings.openai_api_key:
@@ -146,8 +168,12 @@ async def root():
 async def ask(req: AskRequest, request: Request):
     """
     Policy:
-    - Anonymous: 1 free/day per IP+UA hash AND global anonymous pool 200/day.
+    - Anonymous: 1 free/day per IP+UA hash AND global anonymous pool (default 200/day).
     - Logged-in: 5 free/day, then credits/subscription, plus daily hard cap.
+
+    Notes:
+    - We do NOT additionally cap "1 per session total" anymore (it caused confusion and blocks).
+    - If you want it back, add it as a separate optional guard.
     """
     db = None
     try:
@@ -191,9 +217,12 @@ async def ask(req: AskRequest, request: Request):
         # Anonymous gating (no Turnstile)
         # -------------------------
         if user_id is None:
-            ip = request.client.host if request.client else None
+            ip = _get_client_ip(request)
             ua = request.headers.get("user-agent")
             key_hash = build_anon_key(ip=ip, user_agent=ua)
+
+            anon_pool_cap = int(getattr(settings, "anon_global_pool_per_day", 200))
+            anon_key_cap = int(getattr(settings, "anon_free_per_24h", 1))
 
             # 1) Global pool cap
             try:
@@ -202,26 +231,27 @@ async def ask(req: AskRequest, request: Request):
                 _safe_rollback(db)
                 used_global = 10**9  # fail-closed
 
-            if used_global >= int(getattr(settings, "anon_global_pool_per_day", 200)):
+            if used_global >= anon_pool_cap:
                 raise HTTPException(
                     status_code=402,
                     detail="Free access is busy right now. Create a free account to continue and save your conversation.",
                 )
 
-            # 2) Per-key 1/day
+            # 2) Per-key daily cap
             try:
                 used_key = anon_allowance_used_today(db, key_hash)
             except Exception:
                 _safe_rollback(db)
                 used_key = 10**9  # fail-closed
 
-            if used_key >= int(getattr(settings, "anon_free_per_24h", 1)):
+            if used_key >= anon_key_cap:
                 raise HTTPException(
                     status_code=402,
                     detail="Create a free account to save your conversation and continue searching.",
                 )
 
             # 3) Record usage BEFORE calling providers (fail-closed)
+            # Important: we record both key + global in one transaction.
             try:
                 record_anon_use_today(db, key_hash)
                 record_anon_global_use_today(db)
@@ -271,7 +301,7 @@ async def ask(req: AskRequest, request: Request):
         if used_24h >= limit_24h:
             raise HTTPException(
                 status_code=429,
-                detail=f"Daily query limit reached. Create an account or upgrade to continue.",
+                detail="Daily query limit reached. Create an account or upgrade to continue.",
             )
 
         # Credits logic: free users get first N/day free, then spend credits
