@@ -108,25 +108,30 @@ def _insert_message(db, *, session_id: str, role: str, content: str) -> None:
         _safe_rollback(db)
 
 
+def _norm_ua(ua: str | None) -> str:
+    if not ua:
+        return ""
+    # normalize to reduce accidental hash churn
+    return " ".join(ua.strip().lower().split())[:300]
+
+
 def _get_client_ip(request: Request) -> str | None:
     """
-    Render sits behind proxies. Prefer forwarded headers when present.
+    Render/Cloudflare-style proxy headers:
+    - Prefer CF-Connecting-IP if present
+    - Else X-Forwarded-For (first item)
+    - Else request.client.host
     """
-    # Typical proxy chain header: "client, proxy1, proxy2"
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        return cf_ip.strip()
+
     xff = request.headers.get("x-forwarded-for")
     if xff:
-        first = xff.split(",")[0].strip()
-        if first:
-            return first
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[0]
 
-    # Some setups use CF-Connecting-IP; keep as fallback
-    ccip = request.headers.get("cf-connecting-ip")
-    if ccip:
-        ccip = ccip.strip()
-        if ccip:
-            return ccip
-
-    # Last resort
     return request.client.host if request.client else None
 
 
@@ -168,12 +173,14 @@ async def root():
 async def ask(req: AskRequest, request: Request):
     """
     Policy:
-    - Anonymous: 1 free/day per IP+UA hash AND global anonymous pool (default 200/day).
-    - Logged-in: 5 free/day, then credits/subscription, plus daily hard cap.
-
-    Notes:
-    - We do NOT additionally cap "1 per session total" anymore (it caused confusion and blocks).
-    - If you want it back, add it as a separate optional guard.
+    - Anonymous:
+        - 1 free/day per IP+UA hash
+        - AND global anonymous pool 200/day
+        - AND (recommended) 1 free/day per session_id (extra anti-bot)
+    - Logged-in:
+        - 5 free/day
+        - then credits/subscription
+        - plus daily hard cap
     """
     db = None
     try:
@@ -184,7 +191,7 @@ async def ask(req: AskRequest, request: Request):
         if not req.session_id:
             raise HTTPException(status_code=400, detail="session_id is required")
 
-        # Clear any poisoned transaction state from prior exceptions
+        # Clear any poisoned transaction state
         _safe_rollback(db)
 
         # Ensure session exists
@@ -218,11 +225,31 @@ async def ask(req: AskRequest, request: Request):
         # -------------------------
         if user_id is None:
             ip = _get_client_ip(request)
-            ua = request.headers.get("user-agent")
+            ua = _norm_ua(request.headers.get("user-agent"))
             key_hash = build_anon_key(ip=ip, user_agent=ua)
 
-            anon_pool_cap = int(getattr(settings, "anon_global_pool_per_day", 200))
+            anon_global_cap = int(getattr(settings, "anon_global_pool_per_day", 200))
             anon_key_cap = int(getattr(settings, "anon_free_per_24h", 1))
+
+            # 0) Extra guard: 1/day per session_id (recommended)
+            try:
+                row = db.execute(
+                    text(
+                        "select count(*) from queries "
+                        "where session_id=:sid and received_at >= (now() - interval '24 hours')"
+                    ),
+                    {"sid": req.session_id},
+                ).fetchone()
+                used_session_24h = int(row[0]) if row else 0
+            except Exception:
+                _safe_rollback(db)
+                used_session_24h = 10**9  # fail-closed
+
+            if used_session_24h >= 1:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Create a free account to save your conversation and continue searching.",
+                )
 
             # 1) Global pool cap
             try:
@@ -231,13 +258,13 @@ async def ask(req: AskRequest, request: Request):
                 _safe_rollback(db)
                 used_global = 10**9  # fail-closed
 
-            if used_global >= anon_pool_cap:
+            if used_global >= anon_global_cap:
                 raise HTTPException(
                     status_code=402,
                     detail="Free access is busy right now. Create a free account to continue and save your conversation.",
                 )
 
-            # 2) Per-key daily cap
+            # 2) Per-key 1/day
             try:
                 used_key = anon_allowance_used_today(db, key_hash)
             except Exception:
@@ -251,7 +278,6 @@ async def ask(req: AskRequest, request: Request):
                 )
 
             # 3) Record usage BEFORE calling providers (fail-closed)
-            # Important: we record both key + global in one transaction.
             try:
                 record_anon_use_today(db, key_hash)
                 record_anon_global_use_today(db)
@@ -263,10 +289,8 @@ async def ask(req: AskRequest, request: Request):
                     detail="Temporary protection triggered. Please create a free account to continue.",
                 )
 
-            # Best-effort logging
             _insert_message(db, session_id=req.session_id, role="user", content=req.query)
 
-            # Run pipeline as free tier
             result = await run_pipeline(
                 query=req.query,
                 session_id=req.session_id,
@@ -290,7 +314,7 @@ async def ask(req: AskRequest, request: Request):
 
         is_paid = (plan == "paid")
 
-        # Hard daily cap (anti-abuse)
+        # Hard daily cap
         try:
             used_24h = billing_repo.count_queries_last_24h(db, user_id=user_id)
         except Exception:
