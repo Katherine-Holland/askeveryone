@@ -1,27 +1,23 @@
 # app/security/anon_gate.py
 from __future__ import annotations
-
+import os
 import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+_ANON_SALT = os.getenv("ANON_HASH_SALT", "change-me")
 
 def _utc_day_str() -> str:
     # Use UTC day boundaries
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def build_anon_key(*, ip: Optional[str], user_agent: Optional[str]) -> str:
-    """
-    Hash IP + User-Agent into a stable anon key.
-    - If ip missing, use placeholder (fail-closed-ish)
-    - UA truncated to keep it bounded
-    """
-    ip_part = (ip or "0.0.0.0").strip()
-    ua_part = (user_agent or "").strip()[:256]
-    raw = f"{ip_part}|{ua_part}".encode("utf-8")
+def build_anon_key(*, ip: str | None, user_agent: str | None) -> str:
+    ip = (ip or "").strip()
+    ua = (user_agent or "").strip()
+    raw = f"{_ANON_SALT}|{ip}|{ua}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
