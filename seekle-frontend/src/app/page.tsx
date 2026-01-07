@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { askBackend, type AskResponse } from "@/lib/api";
-import Turnstile from "@/components/Turnstile";
+import LoginModal from "@/components/LoginModal";
 
 function getOrCreateSessionId(): string {
-  // Simple client-side session id for now (uuid via crypto)
   const key = "seekle_session_id";
-  const existing = typeof window !== "undefined" ? localStorage.getItem(key) : null;
+  const existing = window.localStorage.getItem(key);
   if (existing) return existing;
 
   const id =
@@ -15,112 +14,107 @@ function getOrCreateSessionId(): string {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random()}`;
 
-  localStorage.setItem(key, id);
+  window.localStorage.setItem(key, id);
   return id;
 }
 
+function isPaywallError(msg: string) {
+  const m = msg.toLowerCase();
+  // Your backend returns 402 with these phrases
+  return (
+    m.includes("backend 402") ||
+    m.includes("create a free account") ||
+    m.includes("free access is busy") ||
+    m.includes("out of credits") ||
+    m.includes("purchase more") ||
+    m.includes("upgrade")
+  );
+}
+
 export default function Home() {
+  const [mounted, setMounted] = useState(false);
+  const [sessionId, setSessionId] = useState("");
+
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<AskResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Turnstile token for anonymous 1 free query
-  const [turnstileToken, setTurnstileToken] = useState("");
-
-  const sessionId = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    return getOrCreateSessionId();
-  }, []);
+  const [loginOpen, setLoginOpen] = useState(false);
 
   useEffect(() => {
-    // Optional: warm the backend or display session_id if you want
+    setMounted(true);
+    setSessionId(getOrCreateSessionId());
   }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     const q = query.trim();
-    if (!q) return;
+    if (!q || !sessionId || loading) return;
 
     setLoading(true);
     setError(null);
     setResp(null);
 
     try {
-      const out = await askBackend({
-        query: q,
-        session_id: sessionId,
-        // ✅ pass Turnstile token (backend requires it for anonymous)
-        turnstile_token: turnstileToken || undefined,
-      });
+      const out = await askBackend({ query: q, session_id: sessionId });
       setResp(out);
     } catch (err: any) {
-      setError(err?.message || "Something went wrong");
+      const msg = err?.message || "Something went wrong";
+      setError(msg);
 
-      // If Turnstile fails/expired, force the user to complete again
-      setTurnstileToken("");
+      // Auto-open login modal if paywalled
+      if (isPaywallError(msg)) setLoginOpen(true);
     } finally {
       setLoading(false);
     }
   }
 
-  const canSearch = !!query.trim() && !!turnstileToken && !loading;
-
   return (
-    <main className="min-h-screen flex items-center justify-center p-6">
+    <main className="min-h-screen flex items-center justify-center p-6 bg-zinc-50 text-zinc-900">
       <div className="w-full max-w-2xl">
         <div className="text-center mb-8">
           <h1 className="text-5xl font-semibold tracking-tight">Seekle</h1>
-          <p className="mt-3 text-sm text-muted-foreground opacity-80">
-            Ask Everyone
-          </p>
-        </div>
+          <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
 
-        <form onSubmit={onSubmit} className="flex flex-col gap-3 items-center">
-          <div className="w-full flex gap-2 items-center">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Ask or type..."
-              className="flex-1 rounded-full border px-5 py-3 text-base outline-none focus:ring-2 focus:ring-black/10"
-            />
+          <div className="mt-4 flex items-center justify-center gap-2">
             <button
-              type="submit"
-              disabled={!canSearch}
-              className="rounded-full px-5 py-3 border bg-black text-white disabled:opacity-50"
+              onClick={() => setLoginOpen(true)}
+              className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-900 hover:bg-zinc-100"
+              disabled={!mounted || !sessionId}
+              title={!mounted ? "Loading…" : ""}
             >
-              {loading ? "Asking…" : "Ask"}
+              Save conversation
             </button>
           </div>
+        </div>
 
-          {/* ✅ Turnstile widget */}
-          <Turnstile onToken={setTurnstileToken} />
-
-          {!turnstileToken ? (
-            <div className="text-xs text-black/50">
-              Complete verification to run your free anonymous query.
-            </div>
-          ) : (
-            <div className="text-xs text-black/50">
-              Verified ✓ You can run 1 free anonymous query.
-            </div>
-          )}
+        <form onSubmit={onSubmit} className="flex gap-2 items-center">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Ask or type..."
+            className="flex-1 rounded-full border border-zinc-200 bg-white px-5 py-3 text-base outline-none focus:ring-2 focus:ring-black/10"
+          />
+          <button
+            type="submit"
+            disabled={!mounted || loading || !query.trim() || !sessionId}
+            className="rounded-full px-5 py-3 border bg-black text-white disabled:opacity-50"
+          >
+            {loading ? "Asking…" : "Search"}
+          </button>
         </form>
 
-        {/* Results */}
         <div className="mt-8">
           {error ? (
-            <div className="rounded-xl border p-4 text-sm text-red-600 whitespace-pre-wrap">
+            <div className="rounded-xl border border-red-200 bg-white p-4 text-sm text-red-600 whitespace-pre-wrap">
               {error}
-              <div className="mt-2 text-xs text-black/60">
-                If this says Turnstile failed/expired, just complete the checkbox again.
-              </div>
             </div>
           ) : null}
 
           {resp ? (
-            <div className="rounded-xl border p-5">
-              <div className="text-xs text-black/60 mb-2">
+            <div className="rounded-xl border border-zinc-200 bg-white p-5">
+              <div className="text-xs text-zinc-500 mb-2">
                 Provider: {resp.provider_used} · Intent: {resp.intent}
               </div>
               <div className="whitespace-pre-wrap leading-7">{resp.answer}</div>
@@ -128,10 +122,17 @@ export default function Home() {
           ) : null}
         </div>
 
-        <div className="mt-8 text-center text-xs text-black/40">
-          Session: {sessionId || "…"}
+        <div className="mt-8 text-center text-xs text-zinc-400">
+          Session: {mounted ? sessionId : "…"}
         </div>
       </div>
+
+      {/* Login modal */}
+      <LoginModal
+        open={loginOpen}
+        onClose={() => setLoginOpen(false)}
+        sessionId={sessionId}
+      />
     </main>
   );
 }
