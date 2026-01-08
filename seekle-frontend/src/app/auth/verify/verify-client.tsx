@@ -1,4 +1,3 @@
-// src/app/auth/verify/verify-client.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -16,7 +15,7 @@ export default function VerifyClient() {
     const token = sp.get("token");
     if (!token) {
       setStatus("error");
-      setError("Missing token. Please open the full link from your email.");
+      setError("Missing token.");
       return;
     }
 
@@ -24,29 +23,31 @@ export default function VerifyClient() {
       try {
         await verifyMagicLink({ token });
         setStatus("ok");
-        // send them back home after verify
+        // send them home (or dashboard later)
         router.replace("/");
       } catch (e: any) {
         setStatus("error");
-        setError(e?.message || "Could not verify link.");
+        setError(e?.message || "Verification failed.");
       }
     })();
   }, [sp, router]);
 
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-zinc-50 text-zinc-900">
-      <div className="w-full max-w-md rounded-2xl border bg-white p-5 shadow">
+      <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
+        <h1 className="text-xl font-semibold">Signing you in…</h1>
+
         {status === "verifying" ? (
-          <div className="text-sm text-zinc-600">Verifying your link…</div>
+          <p className="mt-2 text-sm text-zinc-600">Verifying your magic link.</p>
         ) : null}
 
         {status === "ok" ? (
-          <div className="text-sm text-emerald-700">Verified. Redirecting…</div>
+          <p className="mt-2 text-sm text-emerald-700">Success. Redirecting…</p>
         ) : null}
 
         {status === "error" ? (
-          <div className="text-sm text-red-700 whitespace-pre-wrap">
-            {error || "Verification failed."}
+          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 whitespace-pre-wrap">
+            {error}
           </div>
         ) : null}
       </div>
