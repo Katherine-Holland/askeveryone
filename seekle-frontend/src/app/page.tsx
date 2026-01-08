@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { askBackend, isPaywallError, type AskResponse } from "@/lib/api";
 import LoginModal from "@/components/LoginModal";
 
@@ -35,10 +35,7 @@ export default function Home() {
     setSessionId(getOrCreateSessionId());
   }, []);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-
+  async function runAsk() {
     const q = query.trim();
     if (!q || !sessionId || loading) return;
 
@@ -49,14 +46,11 @@ export default function Home() {
       const out = await askBackend({ query: q, session_id: sessionId });
       setResp(out);
     } catch (err: any) {
-      const msg = err?.message || "Something went wrong";
-
-      // ✅ if paywalled, open login modal instead of "looking broken"
       if (isPaywallError(err)) {
         setLoginOpen(true);
-        setError(null); // optional: keep UI clean, modal explains it
+        setError(null);
       } else {
-        setError(msg);
+        setError(err?.message || "Something went wrong");
       }
     } finally {
       setLoading(false);
@@ -71,29 +65,30 @@ export default function Home() {
           <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
         </div>
 
-        <form onSubmit={onSubmit} className="flex gap-2 items-center">
+        {/* No <form> — avoids any chance of navigation refresh */}
+        <div className="flex gap-2 items-center">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Ask or type..."
             className="flex-1 rounded-full border border-zinc-200 bg-white px-5 py-3 text-base outline-none focus:ring-2 focus:ring-black/10"
-            // ✅ stops Enter key from triggering weird navigation edge cases
             onKeyDown={(e) => {
               if (e.key === "Enter") {
-                // Let the form submit handler handle it (but don’t let browser navigate)
-                // (onSubmit already preventDefaults)
+                e.preventDefault();
+                void runAsk();
               }
             }}
           />
 
           <button
-            type="submit"
+            type="button"
+            onClick={() => void runAsk()}
             disabled={loading || !query.trim() || !sessionId}
             className="rounded-full px-5 py-3 border bg-black text-white disabled:opacity-50"
           >
             {loading ? "Asking…" : "Search"}
           </button>
-        </form>
+        </div>
 
         <div className="mt-8 space-y-3">
           {error ? (
@@ -112,7 +107,6 @@ export default function Home() {
           ) : null}
         </div>
 
-        {/* Only render session after mount to avoid hydration mismatch */}
         {mounted ? (
           <div className="mt-8 text-center text-xs text-zinc-400">
             Session: {sessionId}
@@ -130,4 +124,3 @@ export default function Home() {
     </main>
   );
 }
-
