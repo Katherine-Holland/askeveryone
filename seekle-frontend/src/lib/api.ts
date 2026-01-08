@@ -62,7 +62,6 @@ export async function askBackend(args: AskRequest): Promise<AskResponse> {
       query: args.query,
       session_id: args.session_id,
       ...(args.compare ? { compare: true } : {}),
-      ...(args.turnstile_token ? { turnstile_token: args.turnstile_token } : {}),
     }),
   });
 

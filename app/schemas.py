@@ -13,12 +13,6 @@ class AskRequest(BaseModel):
     compare: bool = False
     mode: str = "text"  # future-proofing ("text" | "voice")
 
-    # ✅ Turnstile (required for anonymous usage)
-    turnstile_token: Optional[str] = Field(
-        default=None,
-        description="Cloudflare Turnstile token (required for anonymous users)",
-    )
-
 
 class AskResponse(BaseModel):
     query_id: str
