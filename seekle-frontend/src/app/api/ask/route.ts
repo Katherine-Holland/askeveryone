@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     if (v) headers[h] = v;
   }
 
-  // ✅ Prevent infinite hangs
+  // Prevent infinite hangs
   const controller = new AbortController();
   const timeoutMs = 8000;
   const t = setTimeout(() => controller.abort(), timeoutMs);
