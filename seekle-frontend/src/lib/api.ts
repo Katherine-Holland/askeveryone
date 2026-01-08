@@ -14,7 +14,6 @@ export type AskRequest = {
   query: string;
   session_id: string;
   compare?: boolean;
-  turnstile_token?: string;
 };
 
 const BACKEND_URL =

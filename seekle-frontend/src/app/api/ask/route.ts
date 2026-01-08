@@ -10,7 +10,6 @@ type AskPayload = {
   query: string;
   session_id: string;
   compare?: boolean;
-  turnstile_token?: string;
 };
 
 export async function POST(req: Request) {
