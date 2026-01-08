@@ -1,3 +1,4 @@
+// src/app/api/ask/route.ts
 import { NextResponse } from "next/server";
 
 const BACKEND_URL =
@@ -13,75 +14,59 @@ type AskPayload = {
 };
 
 export async function POST(req: Request) {
-  let body: AskPayload;
-
-  try {
-    body = (await req.json()) as AskPayload;
-  } catch {
-    return NextResponse.json(
-      { detail: "Invalid JSON body" },
-      { status: 400 }
-    );
-  }
+  const body = (await req.json().catch(() => null)) as AskPayload | null;
 
   if (!body?.query || !body?.session_id) {
-    return NextResponse.json(
-      { detail: "query and session_id are required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ detail: "query and session_id are required" }, { status: 400 });
   }
 
-  // Forward client IP headers (helps your anon gating + logging)
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  // Forward useful client headers (helps anon gating)
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  for (const h of ["x-forwarded-for", "x-real-ip", "cf-connecting-ip", "user-agent"]) {
+    const v = req.headers.get(h);
+    if (v) headers[h] = v;
+  }
 
-  const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) headers["x-forwarded-for"] = fwd;
-
-  const realIp = req.headers.get("x-real-ip");
-  if (realIp) headers["x-real-ip"] = realIp;
-
-  const cfIp = req.headers.get("cf-connecting-ip");
-  if (cfIp) headers["cf-connecting-ip"] = cfIp;
-
-  const ua = req.headers.get("user-agent");
-  if (ua) headers["user-agent"] = ua;
+  // ✅ Prevent infinite hangs
+  const controller = new AbortController();
+  const timeoutMs = 8000;
+  const t = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const upstream = await fetch(`${BACKEND_URL}/ask`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      // avoid caching in Next for dynamic requests
       cache: "no-store",
+      signal: controller.signal,
     });
 
     const contentType = upstream.headers.get("content-type") || "";
     const isJson = contentType.includes("application/json");
 
-    // Try to parse upstream response
     const payload = isJson ? await upstream.json().catch(() => null) : null;
     const text = !isJson ? await upstream.text().catch(() => "") : "";
 
     if (!upstream.ok) {
-      // Preserve backend status (e.g. 402) and detail message
       const detail =
         (payload && (payload.detail || payload.message)) ||
         text ||
         `Backend error (${upstream.status})`;
 
       return NextResponse.json(
-        { detail },
+        { detail, backend_status: upstream.status },
         { status: upstream.status }
       );
     }
 
     return NextResponse.json(payload ?? {}, { status: 200 });
   } catch (e: any) {
+    const msg = e?.name === "AbortError" ? `Upstream timeout (${timeoutMs}ms)` : (e?.message || "unknown");
     return NextResponse.json(
-      { detail: `Upstream fetch failed: ${e?.message || "unknown"}` },
+      { detail: `Upstream fetch failed: ${msg}`, backend_url: BACKEND_URL },
       { status: 502 }
     );
+  } finally {
+    clearTimeout(t);
   }
 }

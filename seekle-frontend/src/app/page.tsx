@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { askBackend, type AskResponse } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { askBackend, isPaywallError, type AskResponse } from "@/lib/api";
 import LoginModal from "@/components/LoginModal";
 
 function getOrCreateSessionId(): string {
   const key = "seekle_session_id";
-  const existing = window.localStorage.getItem(key);
+  const existing = localStorage.getItem(key);
   if (existing) return existing;
 
   const id =
@@ -14,29 +14,17 @@ function getOrCreateSessionId(): string {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random()}`;
 
-  window.localStorage.setItem(key, id);
+  localStorage.setItem(key, id);
   return id;
-}
-
-function isPaywallError(msg: string) {
-  const m = msg.toLowerCase();
-  // Your backend returns 402 with these phrases
-  return (
-    m.includes("backend 402") ||
-    m.includes("create a free account") ||
-    m.includes("free access is busy") ||
-    m.includes("out of credits") ||
-    m.includes("purchase more") ||
-    m.includes("upgrade")
-  );
 }
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
-  const [sessionId, setSessionId] = useState("");
+  const [sessionId, setSessionId] = useState<string>("");
 
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
+
   const [resp, setResp] = useState<AskResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,22 +37,27 @@ export default function Home() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    e.stopPropagation();
+
     const q = query.trim();
     if (!q || !sessionId || loading) return;
 
     setLoading(true);
     setError(null);
-    setResp(null);
 
     try {
       const out = await askBackend({ query: q, session_id: sessionId });
       setResp(out);
     } catch (err: any) {
       const msg = err?.message || "Something went wrong";
-      setError(msg);
 
-      // Auto-open login modal if paywalled
-      if (isPaywallError(msg)) setLoginOpen(true);
+      // ✅ if paywalled, open login modal instead of "looking broken"
+      if (isPaywallError(err)) {
+        setLoginOpen(true);
+        setError(null); // optional: keep UI clean, modal explains it
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -76,17 +69,6 @@ export default function Home() {
         <div className="text-center mb-8">
           <h1 className="text-5xl font-semibold tracking-tight">Seekle</h1>
           <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
-
-          <div className="mt-4 flex items-center justify-center gap-2">
-            <button
-              onClick={() => setLoginOpen(true)}
-              className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-900 hover:bg-zinc-100"
-              disabled={!mounted || !sessionId}
-              title={!mounted ? "Loading…" : ""}
-            >
-              Save conversation
-            </button>
-          </div>
         </div>
 
         <form onSubmit={onSubmit} className="flex gap-2 items-center">
@@ -95,17 +77,25 @@ export default function Home() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Ask or type..."
             className="flex-1 rounded-full border border-zinc-200 bg-white px-5 py-3 text-base outline-none focus:ring-2 focus:ring-black/10"
+            // ✅ stops Enter key from triggering weird navigation edge cases
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                // Let the form submit handler handle it (but don’t let browser navigate)
+                // (onSubmit already preventDefaults)
+              }
+            }}
           />
+
           <button
             type="submit"
-            disabled={!mounted || loading || !query.trim() || !sessionId}
+            disabled={loading || !query.trim() || !sessionId}
             className="rounded-full px-5 py-3 border bg-black text-white disabled:opacity-50"
           >
             {loading ? "Asking…" : "Search"}
           </button>
         </form>
 
-        <div className="mt-8">
+        <div className="mt-8 space-y-3">
           {error ? (
             <div className="rounded-xl border border-red-200 bg-white p-4 text-sm text-red-600 whitespace-pre-wrap">
               {error}
@@ -122,17 +112,22 @@ export default function Home() {
           ) : null}
         </div>
 
-        <div className="mt-8 text-center text-xs text-zinc-400">
-          Session: {mounted ? sessionId : "…"}
-        </div>
-      </div>
+        {/* Only render session after mount to avoid hydration mismatch */}
+        {mounted ? (
+          <div className="mt-8 text-center text-xs text-zinc-400">
+            Session: {sessionId}
+          </div>
+        ) : (
+          <div className="mt-8 text-center text-xs text-zinc-400">Session: …</div>
+        )}
 
-      {/* Login modal */}
-      <LoginModal
-        open={loginOpen}
-        onClose={() => setLoginOpen(false)}
-        sessionId={sessionId}
-      />
+        <LoginModal
+          open={loginOpen}
+          onClose={() => setLoginOpen(false)}
+          sessionId={sessionId}
+        />
+      </div>
     </main>
   );
 }
+
