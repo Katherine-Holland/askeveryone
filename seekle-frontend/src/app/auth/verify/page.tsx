@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { verifyMagicToken } from "@/lib/api";
+import { verifyMagicLink } from "@/lib/api";
 
 export default function VerifyPage() {
   const router = useRouter();
@@ -20,7 +20,7 @@ export default function VerifyPage() {
         return;
       }
       try {
-        await verifyMagicToken({ token });
+        await verifyMagicLink({ token });
         setStatus("ok");
         // redirect home (session is now attached server-side)
         setTimeout(() => router.replace("/"), 400);
