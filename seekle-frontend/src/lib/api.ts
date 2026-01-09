@@ -1,4 +1,5 @@
 // src/lib/api.ts
+
 export type AskResponse = {
   query_id: string;
   answer: string;
@@ -16,8 +17,14 @@ export type AskRequest = {
   compare?: boolean;
 };
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "https://askeveryone.onrender.com";
+export type BillingStatusResponse = {
+  ok: boolean;
+  user_id: string;
+  plan: string; // "free" | "paid" (today)
+  credits_balance: number;
+};
+
+export type Plan = "starter" | "plus" | "power";
 
 /**
  * Helpful for UI logic:
@@ -74,19 +81,14 @@ export async function askBackend(args: AskRequest): Promise<AskResponse> {
 }
 
 // --------------------
-// Auth (Magic Link)
+// Auth (Magic Link) — proxied
 // --------------------
-// You can keep these direct to BACKEND_URL for now.
-// Later we can proxy them too (same pattern) if you want everything under /api/*.
 
 export async function requestMagicLink(args: { email: string; session_id: string }) {
-  const params = new URLSearchParams({
-    email: args.email,
-    session_id: args.session_id,
-  });
-
-  const r = await fetch(`${BACKEND_URL}/auth/request-link?${params.toString()}`, {
+  const r = await fetch(`/api/auth/request-link`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: args.email, session_id: args.session_id }),
   });
 
   if (!r.ok) {
@@ -98,10 +100,9 @@ export async function requestMagicLink(args: { email: string; session_id: string
 }
 
 export async function verifyMagicLink(args: { token: string }) {
-  const params = new URLSearchParams({ token: args.token });
-
-  const r = await fetch(`${BACKEND_URL}/auth/verify?${params.toString()}`, {
+  const r = await fetch(`/api/auth/verify?token=${encodeURIComponent(args.token)}`, {
     method: "GET",
+    cache: "no-store",
   });
 
   if (!r.ok) {
@@ -110,4 +111,40 @@ export async function verifyMagicLink(args: { token: string }) {
   }
 
   return (await r.json()) as { ok: boolean; user_id: string; session_id: string };
+}
+
+// --------------------
+// Billing — proxied
+// --------------------
+
+export async function getBillingStatus(session_id: string): Promise<BillingStatusResponse> {
+  const r = await fetch(`/api/billing/status?session_id=${encodeURIComponent(session_id)}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+
+  if (!r.ok) {
+    const msg = await parseBackendError(r);
+    throw new Error(`Backend ${r.status}: ${msg}`);
+  }
+
+  return (await r.json()) as BillingStatusResponse;
+}
+
+/**
+ * Starts Stripe Checkout and returns the URL.
+ * UI should redirect browser to url.
+ */
+export async function createCheckout(session_id: string, plan: Plan): Promise<{ ok: boolean; url: string }> {
+  const r = await fetch(
+    `/api/billing/checkout?session_id=${encodeURIComponent(session_id)}&plan=${encodeURIComponent(plan)}`,
+    { method: "POST", cache: "no-store" }
+  );
+
+  if (!r.ok) {
+    const msg = await parseBackendError(r);
+    throw new Error(`Backend ${r.status}: ${msg}`);
+  }
+
+  return (await r.json()) as { ok: boolean; url: string };
 }

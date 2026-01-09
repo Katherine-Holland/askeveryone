@@ -1,8 +1,8 @@
+// src/app/auth/verify/verify-client.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { verifyMagicLink } from "@/lib/api";
 
 export default function VerifyClient() {
   const router = useRouter();
@@ -21,9 +21,30 @@ export default function VerifyClient() {
 
     (async () => {
       try {
-        await verifyMagicLink({ token });
+        const r = await fetch(`/api/auth/verify?token=${encodeURIComponent(token)}`, {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        const contentType = r.headers.get("content-type") || "";
+        const isJson = contentType.includes("application/json");
+        const payload = isJson ? await r.json().catch(() => null) : null;
+        const text = !isJson ? await r.text().catch(() => "") : "";
+
+        if (!r.ok) {
+          const msg =
+            (payload && (payload.detail || payload.message)) ||
+            text ||
+            `Verification failed (${r.status})`;
+          throw new Error(msg);
+        }
+
+        // If backend returns a session_id, attach it to this device
+        if (payload?.session_id) {
+          localStorage.setItem("seekle_session_id", String(payload.session_id));
+        }
+
         setStatus("ok");
-        // send them home (or dashboard later)
         router.replace("/");
       } catch (e: any) {
         setStatus("error");

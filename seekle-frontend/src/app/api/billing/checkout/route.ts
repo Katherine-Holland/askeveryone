@@ -1,23 +1,14 @@
-// src/app/api/ask/route.ts
+// src/app/api/billing/checkout/route.ts
 import { NextResponse } from "next/server";
 
 const RAW_BACKEND_URL =
-  (process.env.NODE_ENV !== "production"
-    ? process.env.BACKEND_URL_DEV
-    : undefined) ||
   process.env.BACKEND_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   "https://askeveryone.onrender.com";
 
-type AskPayload = {
-  query: string;
-  session_id: string;
-  compare?: boolean;
-};
+type Plan = "starter" | "plus" | "power";
 
 function safeBackendUrl(raw: string): string {
-  // Render internal URLs often look like: http://askeveryone:10000
-  // Public URLs should be https://...
   let url: URL;
   try {
     url = new URL(raw);
@@ -29,7 +20,7 @@ function safeBackendUrl(raw: string): string {
     url.hostname === "localhost" ||
     url.hostname === "127.0.0.1" ||
     url.hostname.endsWith(".internal") ||
-    /^[a-z0-9-]+$/.test(url.hostname); // allow simple Render service name like "askeveryone"
+    /^[a-z0-9-]+$/.test(url.hostname);
 
   if (isLocalishHost) {
     if (url.protocol !== "http:") {
@@ -47,55 +38,40 @@ function safeBackendUrl(raw: string): string {
 const BACKEND_URL = safeBackendUrl(RAW_BACKEND_URL);
 
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => null)) as AskPayload | null;
+  const { searchParams } = new URL(req.url);
+  const session_id = searchParams.get("session_id");
+  const plan = (searchParams.get("plan") || "").toLowerCase().trim() as Plan;
 
-  if (!body?.query || !body?.session_id) {
+  if (!session_id) {
+    return NextResponse.json({ detail: "session_id is required" }, { status: 400 });
+  }
+  if (!plan || !["starter", "plus", "power"].includes(plan)) {
     return NextResponse.json(
-      { detail: "query and session_id are required" },
+      { detail: "plan must be starter|plus|power" },
       { status: 400 }
     );
   }
 
-  // Forward useful client headers (helps anon gating)
-  // IMPORTANT: append x-forwarded-for rather than overwriting it
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-
-  const incomingXff = req.headers.get("x-forwarded-for");
-  const clientIp =
-    req.headers.get("true-client-ip") ||
-    req.headers.get("x-real-ip") ||
-    req.headers.get("cf-connecting-ip") ||
-    "";
-
-  if (incomingXff && clientIp) headers["x-forwarded-for"] = `${incomingXff}, ${clientIp}`;
-  else if (incomingXff) headers["x-forwarded-for"] = incomingXff;
-  else if (clientIp) headers["x-forwarded-for"] = clientIp;
-
-  const xReal = req.headers.get("x-real-ip");
-  if (xReal) headers["x-real-ip"] = xReal;
-
-  const trueClient = req.headers.get("true-client-ip");
-  if (trueClient) headers["true-client-ip"] = trueClient;
-
-  const cfIp = req.headers.get("cf-connecting-ip");
-  if (cfIp) headers["cf-connecting-ip"] = cfIp;
-
-  const ua = req.headers.get("user-agent");
-  if (ua) headers["user-agent"] = ua;
-
-  // Prevent infinite hangs
   const controller = new AbortController();
-  const timeoutMs = 10_000;
+  const timeoutMs = 15_000;
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const upstream = await fetch(`${BACKEND_URL}/ask`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      cache: "no-store",
-      signal: controller.signal,
-    });
+    const upstream = await fetch(
+      `${BACKEND_URL}/billing/checkout?session_id=${encodeURIComponent(
+        session_id
+      )}&plan=${encodeURIComponent(plan)}`,
+      {
+        method: "POST",
+        cache: "no-store",
+        signal: controller.signal,
+        headers: {
+          ...(req.headers.get("user-agent")
+            ? { "user-agent": req.headers.get("user-agent") as string }
+            : {}),
+        },
+      }
+    );
 
     const contentType = upstream.headers.get("content-type") || "";
     const isJson = contentType.includes("application/json");
