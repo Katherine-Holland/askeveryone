@@ -41,8 +41,17 @@ async function parseBackendError(r: Response): Promise<string> {
   try {
     if (contentType.includes("application/json")) {
       const data = await r.json();
+
+      // FastAPI validation errors: { detail: [{loc, msg, type}, ...] }
+      if (Array.isArray(data?.detail)) {
+        return data.detail
+          .map((e: any) => e?.msg || JSON.stringify(e))
+          .join(", ");
+      }
+
       if (data?.detail) return String(data.detail);
       if (data?.message) return String(data.message);
+
       return JSON.stringify(data);
     }
   } catch {
@@ -88,7 +97,8 @@ export async function requestMagicLink(args: { email: string; session_id: string
   const r = await fetch(`/api/auth/request-link`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: args.email, session_id: args.session_id }),
+    body: JSON.stringify(args),
+    cache: "no-store",
   });
 
   if (!r.ok) {
@@ -98,6 +108,7 @@ export async function requestMagicLink(args: { email: string; session_id: string
 
   return (await r.json()) as { ok: boolean };
 }
+
 
 export async function verifyMagicLink(args: { token: string }) {
   const r = await fetch(`/api/auth/verify?token=${encodeURIComponent(args.token)}`, {

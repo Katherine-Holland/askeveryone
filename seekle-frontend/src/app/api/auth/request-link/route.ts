@@ -2,13 +2,10 @@
 import { NextResponse } from "next/server";
 
 const RAW_BACKEND_URL =
-  (process.env.NODE_ENV !== "production"
-    ? process.env.BACKEND_URL_DEV
-    : undefined) ||
+  (process.env.NODE_ENV !== "production" ? process.env.BACKEND_URL_DEV : undefined) ||
   process.env.BACKEND_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   "https://askeveryone.onrender.com";
-
 
 type Payload = { email: string; session_id: string };
 
@@ -24,7 +21,7 @@ function safeBackendUrl(raw: string): string {
     url.hostname === "localhost" ||
     url.hostname === "127.0.0.1" ||
     url.hostname.endsWith(".internal") ||
-    /^[a-z0-9-]+$/.test(url.hostname); // allow Render internal service name
+    /^[a-z0-9-]+$/.test(url.hostname);
 
   if (isLocalishHost) {
     if (url.protocol !== "http:") throw new Error(`Internal backend must use http:// (got ${url.protocol})`);
@@ -44,7 +41,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ detail: "email and session_id are required" }, { status: 400 });
   }
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const params = new URLSearchParams({
+    email: body.email,
+    session_id: body.session_id,
+  });
+
+  const headers: Record<string, string> = {};
   const ua = req.headers.get("user-agent");
   if (ua) headers["user-agent"] = ua;
 
@@ -53,10 +55,10 @@ export async function POST(req: Request) {
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const upstream = await fetch(`${BACKEND_URL}/auth/request-link`, {
+    // ✅ backend expects query params, not JSON body
+    const upstream = await fetch(`${BACKEND_URL}/auth/request-link?${params.toString()}`, {
       method: "POST",
       headers,
-      body: JSON.stringify(body),
       cache: "no-store",
       signal: controller.signal,
     });
@@ -73,23 +75,13 @@ export async function POST(req: Request) {
         text ||
         `Backend error (${upstream.status})`;
 
-      return NextResponse.json(
-        { detail, backend_status: upstream.status },
-        { status: upstream.status }
-      );
+      return NextResponse.json({ detail, backend_status: upstream.status }, { status: upstream.status });
     }
 
     return NextResponse.json(payload ?? { ok: true }, { status: 200 });
   } catch (e: any) {
-    const msg =
-      e?.name === "AbortError"
-        ? `Upstream timeout (${timeoutMs}ms)`
-        : e?.message || "unknown";
-
-    return NextResponse.json(
-      { detail: `Upstream fetch failed: ${msg}`, backend_url: BACKEND_URL },
-      { status: 502 }
-    );
+    const msg = e?.name === "AbortError" ? `Upstream timeout (${timeoutMs}ms)` : e?.message || "unknown";
+    return NextResponse.json({ detail: `Upstream fetch failed: ${msg}`, backend_url: BACKEND_URL }, { status: 502 });
   } finally {
     clearTimeout(t);
   }
