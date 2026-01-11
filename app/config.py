@@ -106,7 +106,8 @@ class Settings(BaseModel):
     anon_free_per_24h: int = int(os.getenv("ANON_FREE_PER_24H", "1"))
     anon_key_salt: str = os.getenv("ANON_KEY_SALT", "change-me-please")  # set in Render
 
-
+    # NEW: per-session anon allowance (UTC day). Default 2 to tolerate double submits.
+    anon_session_free_per_day: int = _env_int("ANON_SESSION_FREE_PER_DAY", 2)
 
     # Price IDs -> credits
     stripe_price_starter: str = _env_str("STRIPE_PRICE_STARTER", "")

@@ -191,7 +191,7 @@ async def ask(req: AskRequest, request: Request):
     - Anonymous:
         - 1 free/day per IP+UA hash
         - AND global anonymous pool 200/day
-        - AND 1 free/day per session_id (extra anti-bot)
+        - AND N free/day per session_id (extra anti-bot; default 2 to tolerate double-submits)
     - Logged-in:
         - 5 free/day
         - then credits/subscription
@@ -246,14 +246,17 @@ async def ask(req: AskRequest, request: Request):
             anon_global_cap = int(getattr(settings, "anon_global_pool_per_day", 200))
             anon_key_cap = int(getattr(settings, "anon_free_per_24h", 1))
 
-            # 0) Extra guard: 1/day per session_id (UTC day boundary)
+            # 0) Extra guard: N/day per session_id (UTC day boundary)
+            # Default is 2 to tolerate accidental double-submits from the frontend.
             try:
                 used_session_today = _anon_session_used_today(db, req.session_id)
             except Exception:
                 _safe_rollback(db)
                 used_session_today = 10**9  # fail-closed
 
-            if used_session_today >= 1:
+            anon_session_cap = int(getattr(settings, "anon_session_free_per_day", 2))
+
+            if used_session_today >= anon_session_cap:
                 raise HTTPException(
                     status_code=402,
                     detail="Create a free account to save your conversation and continue searching.",
