@@ -69,6 +69,13 @@ class Settings(BaseModel):
     # Database (Neon)
     database_url: str = _env_str("DATABASE_URL", "")
 
+    # Frontend (for links + redirects)
+    frontend_base_url: str = _env_str("FRONTEND_BASE_URL", "https://www.seekle.io")
+
+    # Email (Resend)
+    resend_api_key: str = _env_str("RESEND_API_KEY", "")
+    mail_from: str = _env_str("MAIL_FROM", "")
+
     # ---- Billing / credits ----
     # You asked: logged-in users get 5 free/day, anonymous gets 0 free.
     free_daily_limit: int = _env_int("FREE_DAILY_LIMIT", 5)         # free queries/day for logged-in free users
