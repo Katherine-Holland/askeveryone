@@ -53,6 +53,18 @@ def _safe_db_rollback(db) -> None:
         pass
 
 
+def _safe_db_commit(db) -> None:
+    """
+    IMPORTANT: Without committing query rows, billing_repo.count_queries_last_24h()
+    will keep returning 0, which makes free users look unlimited.
+    """
+    try:
+        if db:
+            db.commit()
+    except Exception:
+        _safe_db_rollback(db)
+
+
 def _safe_db_close(db) -> None:
     try:
         if db:
@@ -216,7 +228,14 @@ async def call_provider(provider_name: str, query: str, intent: str, meta: Dict[
     return await provider.ask(query=query, intent=intent, meta=meta)
 
 
-async def call_provider_logged(db, query_uuid, provider_name: str, query: str, intent: str, meta: Dict[str, Any]) -> str:
+async def call_provider_logged(
+    db,
+    query_uuid,
+    provider_name: str,
+    query: str,
+    intent: str,
+    meta: Dict[str, Any],
+) -> str:
     pc_id = None
     start = time.perf_counter()
 
@@ -224,6 +243,7 @@ async def call_provider_logged(db, query_uuid, provider_name: str, query: str, i
         try:
             pc = dbrepo.create_provider_call(db, query_id=query_uuid, provider=provider_name)
             pc_id = pc.call_id
+            _safe_db_commit(db)
         except Exception:
             _safe_db_rollback(db)
             db = None
@@ -242,6 +262,7 @@ async def call_provider_logged(db, query_uuid, provider_name: str, query: str, i
                     latency_ms=latency_ms,
                     answer_excerpt=excerpt,
                 )
+                _safe_db_commit(db)
             except Exception:
                 _safe_db_rollback(db)
 
@@ -259,6 +280,7 @@ async def call_provider_logged(db, query_uuid, provider_name: str, query: str, i
                     latency_ms=latency_ms,
                     error_code="PROVIDER_ERROR",
                 )
+                _safe_db_commit(db)
             except Exception:
                 _safe_db_rollback(db)
 
@@ -286,6 +308,7 @@ async def run_pipeline(
 
     db = get_session()
 
+    # Create query row (commit so billing counters can see it)
     if db:
         try:
             dbrepo.create_query(
@@ -297,6 +320,7 @@ async def run_pipeline(
                 features_json=features,
                 pre_intent_hint=pre.get("pre_intent_hint"),
             )
+            _safe_db_commit(db)
         except Exception:
             _safe_db_rollback(db)
 
@@ -384,7 +408,7 @@ async def run_pipeline(
         "memory": memory,
     }
 
-    # ✅ Back-compat: preserve "state" if callers still provide it
+    # Back-compat: preserve "state" if callers still provide it
     if state and isinstance(state, dict):
         meta["state"] = state
 
@@ -436,6 +460,7 @@ async def run_pipeline(
                     answered=True,
                     meta_json={"features": features, "router": plan, "errors": errors},
                 )
+                _safe_db_commit(db)
             except Exception:
                 _safe_db_rollback(db)
 
@@ -458,7 +483,7 @@ async def run_pipeline(
 
     ans_a = ""
     ans_b = ""
-    errors: List[str] = []
+    errors = []
 
     pool = [a_provider, b_provider] + [p for p in fallbacks if p not in [a_provider, b_provider]]
     chosen: List[str] = []
@@ -511,6 +536,7 @@ async def run_pipeline(
                     answered=True,
                     meta_json={"features": features, "router": plan, "ranker": ranked, "errors": errors},
                 )
+                _safe_db_commit(db)
             except Exception:
                 _safe_db_rollback(db)
 
@@ -546,6 +572,7 @@ async def run_pipeline(
                 answered=True,
                 meta_json={"features": features, "router": plan, "errors": errors},
             )
+            _safe_db_commit(db)
         except Exception:
             _safe_db_rollback(db)
 
