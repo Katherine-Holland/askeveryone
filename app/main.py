@@ -18,6 +18,9 @@ from app.db.session import init_engine, get_session
 from app.limits import daily_limit_for_user, max_tokens_for_tier
 from app.db import billing_repo
 
+# conversation + memory
+from app.db import memory_repo
+
 # anon gate
 from app.security.anon_gate import (
     build_anon_key,
@@ -34,6 +37,7 @@ from app.db.base import Base
 import app.db.models
 import app.db.models_auth
 import app.db.models_billing
+import app.db.models_memory  # ensures session_memory is created
 
 # Routers
 from app.api.chat import router as chat_router
@@ -111,7 +115,6 @@ def _insert_message(db, *, session_id: str, role: str, content: str) -> None:
 def _norm_ua(ua: str | None) -> str:
     if not ua:
         return ""
-    # normalize to reduce accidental hash churn
     return " ".join(ua.strip().lower().split())[:300]
 
 
@@ -148,6 +151,76 @@ def _anon_session_used_today(db, session_id: str) -> int:
         {"sid": session_id},
     ).fetchone()
     return int(row[0]) if row else 0
+
+
+def _should_update_memory(turn_count: int) -> bool:
+    """
+    Update memory every N messages (not N "pairs").
+    Default N=6 is a good cheap baseline.
+    """
+    n = int(getattr(settings, "memory_update_every_n_turns", 6))
+    if n <= 0:
+        return False
+    return (turn_count % n) == 0
+
+
+def _rule_based_memory_summary(recent_msgs, previous: str = "") -> str:
+    """
+    Cheap, deterministic memory summary.
+    (Step D can upgrade this to model-based.)
+    """
+    try:
+        user_lines = [m.get("content", "") for m in recent_msgs if m.get("role") == "user"][-6:]
+        assistant_lines = [m.get("content", "") for m in recent_msgs if m.get("role") == "assistant"][-3:]
+
+        parts = []
+        prev = (previous or "").strip()
+        if prev:
+            parts.append(prev)
+
+        if user_lines:
+            parts.append(
+                "Recent user topics/questions:\n- "
+                + "\n- ".join([u.strip().replace("\n", " ")[:220] for u in user_lines if u.strip()])
+            )
+
+        if assistant_lines:
+            parts.append(
+                "Recent assistant answers (brief excerpts):\n- "
+                + "\n- ".join([a.strip().replace("\n", " ")[:220] for a in assistant_lines if a.strip()])
+            )
+
+        return "\n\n".join([p for p in parts if p]).strip()
+    except Exception:
+        return (previous or "").strip()
+
+
+def _update_memory_best_effort(db, session_id: str) -> None:
+    """
+    Never blocks the request. Updates session_memory occasionally.
+    """
+    try:
+        row = db.execute(
+            text("select count(*) from messages where session_id=:sid"),
+            {"sid": session_id},
+        ).fetchone()
+        turn_count = int(row[0]) if row else 0
+
+        if not _should_update_memory(turn_count):
+            return
+
+        recent = memory_repo.get_recent_messages(db, session_id, limit=20)
+        prev = memory_repo.get_memory(db, session_id)
+        summary = _rule_based_memory_summary(recent, previous=prev)
+
+        max_chars = int(getattr(settings, "max_memory_chars", 1200))
+        summary = (summary or "")[:max_chars]
+
+        memory_repo.upsert_memory(db, session_id, summary)
+        _safe_commit(db)
+
+    except Exception:
+        _safe_rollback(db)
 
 
 @app.get("/diagnostics/openai_ping")
@@ -190,10 +263,10 @@ async def ask(req: AskRequest, request: Request):
     Policy:
     - Anonymous:
         - 1 free/day per IP+UA hash
-        - AND global anonymous pool 200/day
-        - AND N free/day per session_id (extra anti-bot; default 2 to tolerate double-submits)
+        - AND global anonymous pool cap/day
+        - AND N free/day per session_id (default 2 to tolerate double-submits)
     - Logged-in:
-        - 5 free/day
+        - N free/day (FREE_DAILY_LIMIT)
         - then credits/subscription
         - plus daily hard cap
     """
@@ -206,7 +279,6 @@ async def ask(req: AskRequest, request: Request):
         if not req.session_id:
             raise HTTPException(status_code=400, detail="session_id is required")
 
-        # Clear any poisoned transaction state
         _safe_rollback(db)
 
         # Ensure session exists
@@ -235,26 +307,37 @@ async def ask(req: AskRequest, request: Request):
             _safe_rollback(db)
             user_id = None
 
+        # Load conversation + memory (Step C)
+        history_limit = int(getattr(settings, "conversation_history_limit", 16))
+        conversation = []
+        memory = ""
+        try:
+            conversation = memory_repo.get_recent_messages(db, req.session_id, limit=history_limit)
+            memory = memory_repo.get_memory(db, req.session_id)
+        except Exception:
+            _safe_rollback(db)
+            conversation = []
+            memory = ""
+
         # -------------------------
-        # Anonymous gating (no Turnstile)
+        # Anonymous gating
         # -------------------------
         if user_id is None:
             ip = _get_client_ip(request)
             ua = _norm_ua(request.headers.get("user-agent"))
             key_hash = build_anon_key(ip=ip, user_agent=ua)
 
-            anon_global_cap = int(getattr(settings, "anon_global_pool_per_day", 200))
+            # IMPORTANT: match config.py names
+            anon_global_cap = int(getattr(settings, "global_free_pool_per_day", 200))
             anon_key_cap = int(getattr(settings, "anon_free_per_24h", 1))
+            anon_session_cap = int(getattr(settings, "anon_session_free_per_day", 2))
 
             # 0) Extra guard: N/day per session_id (UTC day boundary)
-            # Default is 2 to tolerate accidental double-submits from the frontend.
             try:
                 used_session_today = _anon_session_used_today(db, req.session_id)
             except Exception:
                 _safe_rollback(db)
-                used_session_today = 10**9  # fail-closed
-
-            anon_session_cap = int(getattr(settings, "anon_session_free_per_day", 2))
+                used_session_today = 10**9
 
             if used_session_today >= anon_session_cap:
                 raise HTTPException(
@@ -267,7 +350,7 @@ async def ask(req: AskRequest, request: Request):
                 used_global = anon_global_used_today(db)
             except Exception:
                 _safe_rollback(db)
-                used_global = 10**9  # fail-closed
+                used_global = 10**9
 
             if used_global >= anon_global_cap:
                 raise HTTPException(
@@ -280,7 +363,7 @@ async def ask(req: AskRequest, request: Request):
                 used_key = anon_allowance_used_today(db, key_hash)
             except Exception:
                 _safe_rollback(db)
-                used_key = 10**9  # fail-closed
+                used_key = 10**9
 
             if used_key >= anon_key_cap:
                 raise HTTPException(
@@ -300,6 +383,7 @@ async def ask(req: AskRequest, request: Request):
                     detail="Temporary protection triggered. Please create a free account to continue.",
                 )
 
+            # log user message
             _insert_message(db, session_id=req.session_id, role="user", content=req.query)
 
             result = await run_pipeline(
@@ -308,9 +392,16 @@ async def ask(req: AskRequest, request: Request):
                 user_id=None,
                 compare=bool(getattr(req, "compare", False)),
                 max_tokens=max_tokens_for_tier(is_paid=False),
+                conversation=conversation,
+                memory=memory,
             )
 
+            # log assistant message
             _insert_message(db, session_id=req.session_id, role="assistant", content=result.get("answer", ""))
+
+            # update memory occasionally
+            _update_memory_best_effort(db, req.session_id)
+
             return AskResponse(**result)
 
         # -------------------------
@@ -330,7 +421,7 @@ async def ask(req: AskRequest, request: Request):
             used_24h = billing_repo.count_queries_last_24h(db, user_id=user_id)
         except Exception:
             _safe_rollback(db)
-            used_24h = 10**9  # fail-closed
+            used_24h = 10**9
 
         limit_24h = daily_limit_for_user(is_paid=is_paid)
         if used_24h >= limit_24h:
@@ -367,9 +458,14 @@ async def ask(req: AskRequest, request: Request):
             user_id=user_id,
             compare=bool(getattr(req, "compare", False)),
             max_tokens=max_tokens_for_tier(is_paid=is_paid),
+            conversation=conversation,
+            memory=memory,
         )
 
         _insert_message(db, session_id=req.session_id, role="assistant", content=result.get("answer", ""))
+
+        _update_memory_best_effort(db, req.session_id)
+
         return AskResponse(**result)
 
     except HTTPException:

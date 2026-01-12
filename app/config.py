@@ -118,5 +118,11 @@ class Settings(BaseModel):
     credits_plus: int = _env_int("CREDITS_PLUS", 450)
     credits_power: int = _env_int("CREDITS_POWER", 1200)
 
+    # Conversation / memory
+    conversation_history_limit: int = _env_int("CONVERSATION_HISTORY_LIMIT", 16)
+    memory_update_every_n_turns: int = _env_int("MEMORY_UPDATE_EVERY_N_TURNS", 6)
+    max_memory_chars: int = _env_int("MAX_MEMORY_CHARS", 1200)
+
+
 
 settings = Settings()

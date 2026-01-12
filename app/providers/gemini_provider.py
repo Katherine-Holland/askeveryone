@@ -1,11 +1,61 @@
+# app/providers/gemini_provider.py
+from __future__ import annotations
+
 import httpx
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
+
 from app.config import settings
 from .base import BaseProvider, ProviderError
 
 
 class GeminiProvider(BaseProvider):
     name = "GEMINI"
+
+    def _build_gemini_contents(self, meta: Dict[str, Any], query: str) -> List[Dict[str, Any]]:
+        """
+        Gemini generateContent expects:
+          contents: [{ role: "user"|"model", parts: [{text:"..."}] }, ...]
+        We'll map:
+          - role=user -> "user"
+          - role=assistant -> "model"
+        We'll also ignore "system" (Gemini v1beta generateContent doesn't have a true system role),
+        so system instructions are added via a leading user message.
+        """
+        raw_msgs = meta.get("messages")
+        contents: List[Dict[str, Any]] = []
+
+        if isinstance(raw_msgs, list) and raw_msgs:
+            for m in raw_msgs:
+                if not isinstance(m, dict):
+                    continue
+                role = (m.get("role") or "").strip()
+                content = (m.get("content") or "").strip()
+                if not content:
+                    continue
+
+                if role == "system":
+                    continue
+
+                if role == "user":
+                    contents.append({"role": "user", "parts": [{"text": content}]})
+                elif role == "assistant":
+                    contents.append({"role": "model", "parts": [{"text": content}]})
+                else:
+                    continue
+
+        if contents:
+            return contents
+
+        # Fallback: single-turn
+        return [{"role": "user", "parts": [{"text": query}]}]
+
+    def _clamp_max_tokens(self, meta: Dict[str, Any]) -> int:
+        max_tokens = int(meta.get("max_tokens") or 800)
+        if max_tokens < 64:
+            max_tokens = 64
+        if max_tokens > 4096:
+            max_tokens = 4096
+        return max_tokens
 
     async def ask(self, query: str, intent: str, meta: Dict[str, Any]) -> str:
         if not settings.gemini_api_key:
@@ -22,27 +72,24 @@ class GeminiProvider(BaseProvider):
         system_text = (
             "You are Seekle (Ask Everyone). Answer the user clearly and helpfully.\n"
             f"Today's date (UTC) is {today}. If the user asks for today's date, use that.\n"
+            "For follow-up questions, infer missing context from the conversation.\n"
             "If unsure about a time-sensitive fact, say you're not sure and suggest checking sources."
         )
 
-        # ✅ Max tokens from orchestrator meta (Gemini uses maxOutputTokens)
-        max_tokens = int(meta.get("max_tokens") or 800)
-        if max_tokens < 64:
-            max_tokens = 64
-        # Gemini max varies by model; 4096 is a safe-ish upper bound for output caps.
-        if max_tokens > 4096:
-            max_tokens = 4096
+        max_tokens = self._clamp_max_tokens(meta)
+
+        # Build conversation contents from meta["messages"], then prefix the system text as the first user turn.
+        contents = self._build_gemini_contents(meta=meta, query=query)
+
+        # Ensure the system instructions are always present (Gemini doesn't have a system role here)
+        # Put instructions first as a user message to steer the model.
+        contents = [{"role": "user", "parts": [{"text": system_text}]}] + contents
 
         payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": f"{system_text}\n\nUser: {query}"}],
-                }
-            ],
+            "contents": contents,
             "generationConfig": {
                 "temperature": 0.4,
-                "maxOutputTokens": max_tokens,  # ✅ UPDATED
+                "maxOutputTokens": max_tokens,
             },
         }
 
@@ -72,7 +119,12 @@ class GeminiProvider(BaseProvider):
                 body = e.response.text[:400]
             except Exception:
                 pass
-            raise ProviderError(f"Gemini HTTP {e.response.status_code}: {body}") from e
+
+            status = e.response.status_code
+            if status == 429:
+                raise ProviderError("Gemini quota/rate limit hit (429).") from e
+
+            raise ProviderError(f"Gemini HTTP {status}: {body}") from e
 
         except ProviderError:
             raise

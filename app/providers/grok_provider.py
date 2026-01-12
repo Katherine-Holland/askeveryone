@@ -1,5 +1,9 @@
+# app/providers/grok_provider.py
+from __future__ import annotations
+
 import httpx
-from typing import Dict, Any
+from typing import Dict, Any, List
+
 from app.config import settings
 from .base import BaseProvider, ProviderError
 
@@ -18,6 +22,7 @@ class GrokProvider(BaseProvider):
         system_prompt = (
             "You are Seekle (Ask Everyone). Answer the user clearly and helpfully.\n"
             f"Today's date (UTC) is {today}. If the user asks for today's date, use that.\n"
+            "For follow-up questions, infer missing context from the conversation.\n"
             "If unsure about a time-sensitive fact, say you're not sure and suggest checking sources."
         )
 
@@ -28,14 +33,35 @@ class GrokProvider(BaseProvider):
         if max_tokens > 4000:
             max_tokens = 4000
 
-        payload = {
-            "model": settings.grok_model or "grok-beta",
-            "messages": [
+        # ✅ Step D: use conversation context if provided
+        msgs: List[Dict[str, str]] = []
+        raw_msgs = meta.get("messages")
+
+        if isinstance(raw_msgs, list) and raw_msgs:
+            for m in raw_msgs:
+                if not isinstance(m, dict):
+                    continue
+                role = (m.get("role") or "").strip()
+                content = (m.get("content") or "").strip()
+                if role in ("system", "user", "assistant") and content:
+                    msgs.append({"role": role, "content": content})
+
+        if msgs:
+            # Prepend our authoritative system message and drop other system messages
+            messages = [{"role": "system", "content": system_prompt}] + [
+                m for m in msgs if m.get("role") != "system"
+            ]
+        else:
+            messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query},
-            ],
+            ]
+
+        payload: Dict[str, Any] = {
+            "model": settings.grok_model or "grok-beta",
+            "messages": messages,
             "temperature": 0.4,
-            "max_tokens": max_tokens,  # ✅ UPDATED
+            "max_tokens": max_tokens,
         }
 
         headers = {
@@ -46,17 +72,28 @@ class GrokProvider(BaseProvider):
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
                 r = await client.post(url, headers=headers, json=payload)
-                r.raise_for_status()
-                data = r.json()
-                return data["choices"][0]["message"]["content"].strip()
+        except httpx.TimeoutException:
+            raise ProviderError("Grok request timed out")
+        except Exception as e:
+            raise ProviderError(f"Grok request failed: {type(e).__name__}")
 
+        try:
+            r.raise_for_status()
         except httpx.HTTPStatusError as e:
             body = ""
             try:
-                body = e.response.text[:300]
+                body = e.response.text[:600]
             except Exception:
                 pass
-            raise ProviderError(f"Grok HTTP {e.response.status_code}: {body}") from e
 
-        except Exception as e:
-            raise ProviderError(f"Grok error: {type(e).__name__}") from e
+            status = e.response.status_code
+            if status == 429:
+                raise ProviderError("Grok quota/rate limit hit (429).") from e
+
+            raise ProviderError(f"Grok HTTP {status}: {body}") from e
+
+        data = r.json()
+        try:
+            return data["choices"][0]["message"]["content"].strip()
+        except Exception:
+            raise ProviderError("Grok response parsing error")

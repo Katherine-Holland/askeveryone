@@ -1,7 +1,9 @@
 # app/orchestrator.py
+from __future__ import annotations
+
 import time
 import uuid
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 from app.pre_router import extract_features, pre_route
@@ -19,6 +21,7 @@ from app.providers.base import ProviderError
 
 from app.db.session import get_session
 from app.db import repo as dbrepo
+from app.db import memory_repo
 
 from app.limits import cooldown_provider, is_provider_available
 
@@ -60,6 +63,54 @@ def _safe_db_close(db) -> None:
         pass
 
 
+def _build_messages(
+    *,
+    query: str,
+    conversation: Optional[List[Dict[str, str]]] = None,
+    memory: str = "",
+    today_utc: str = "",
+) -> List[Dict[str, str]]:
+    """
+    Build a single normalized conversation payload usable by all providers.
+    Providers SHOULD prefer meta["messages"] over constructing their own prompt.
+    """
+    msgs: List[Dict[str, str]] = []
+
+    system_lines = [
+        "You are Seekle, a helpful assistant.",
+        "Use the conversation to answer follow-up questions directly.",
+        "Infer missing context from prior turns (e.g., destinations, subjects, entities).",
+        "Do not ask the user for their location unless the question truly requires it (e.g., 'near me').",
+    ]
+    if today_utc:
+        system_lines.append(f"Today's date (UTC): {today_utc}")
+
+    # Optional memory summary: comes first
+    if memory and memory.strip():
+        msgs.append({"role": "system", "content": f"Conversation memory (may be incomplete):\n{memory.strip()}"})
+
+    # Main system instruction
+    msgs.append({"role": "system", "content": "\n".join(system_lines)})
+
+    # Prior conversation (oldest -> newest)
+    if conversation:
+        for m in conversation:
+            if not isinstance(m, dict):
+                continue
+            role = (m.get("role") or "").strip()
+            content = (m.get("content") or "").strip()
+            if not role or not content:
+                continue
+            if role not in ("user", "assistant", "system"):
+                role = "user"
+            msgs.append({"role": role, "content": content})
+
+    # Current user turn last
+    msgs.append({"role": "user", "content": (query or "").strip()})
+
+    return msgs
+
+
 async def call_provider(provider_name: str, query: str, intent: str, meta: Dict[str, Any]) -> str:
     provider = PROVIDERS.get(provider_name)
     if not provider:
@@ -67,7 +118,14 @@ async def call_provider(provider_name: str, query: str, intent: str, meta: Dict[
     return await provider.ask(query=query, intent=intent, meta=meta)
 
 
-async def call_provider_logged(db, query_uuid, provider_name: str, query: str, intent: str, meta: Dict[str, Any]) -> str:
+async def call_provider_logged(
+    db,
+    query_uuid,
+    provider_name: str,
+    query: str,
+    intent: str,
+    meta: Dict[str, Any],
+) -> str:
     """
     Logs provider call start/end into Neon.
     If DB is unavailable/broken, falls back to direct provider call.
@@ -82,13 +140,12 @@ async def call_provider_logged(db, query_uuid, provider_name: str, query: str, i
             pc_id = pc.call_id
         except Exception:
             _safe_db_rollback(db)
-            db = None  # stop trying to write more logging
+            db = None
 
     try:
         answer = await call_provider(provider_name, query, intent, meta)
         latency_ms = int((time.perf_counter() - start) * 1000)
 
-        # Try to log "finish success"
         if db and pc_id:
             try:
                 excerpt = (answer[:300] + "…") if len(answer) > 300 else answer
@@ -107,7 +164,6 @@ async def call_provider_logged(db, query_uuid, provider_name: str, query: str, i
     except Exception as e:
         latency_ms = int((time.perf_counter() - start) * 1000)
 
-        # Try to log "finish failure"
         if db and pc_id:
             try:
                 dbrepo.finish_provider_call(
@@ -129,6 +185,8 @@ async def run_pipeline(
     user_id=None,
     compare: bool = False,
     max_tokens: int = 500,
+    conversation: Optional[List[Dict[str, str]]] = None,
+    memory: str = "",
 ) -> Dict[str, Any]:
     t0 = time.perf_counter()
     query_uuid = uuid.uuid4()
@@ -152,6 +210,19 @@ async def run_pipeline(
             )
         except Exception:
             _safe_db_rollback(db)
+
+    # If caller didn't pass conversation/memory, try best-effort load here too.
+    # This makes the orchestrator resilient and keeps behavior consistent.
+    if db and session_id:
+        try:
+            if conversation is None:
+                conversation = memory_repo.get_recent_messages(db, session_id, limit=16)
+            if not memory:
+                memory = memory_repo.get_memory(db, session_id)
+        except Exception:
+            _safe_db_rollback(db)
+            conversation = conversation or []
+            memory = memory or ""
 
     # Decide routing plan
     if pre.get("short_circuit"):
@@ -216,6 +287,15 @@ async def run_pipeline(
     providers_called: List[str] = []
 
     today_utc = datetime.now(timezone.utc).strftime("%B %d, %Y")
+
+    # Normalized conversation payload (Step C)
+    messages = _build_messages(
+        query=query,
+        conversation=conversation or [],
+        memory=memory or "",
+        today_utc=today_utc,
+    )
+
     meta = {
         "query_id": str(query_uuid),
         "session_id": session_id,
@@ -225,6 +305,8 @@ async def run_pipeline(
         "today_utc": today_utc,
         "max_tokens": int(max_tokens),
         "compare": bool(compare),
+        "messages": messages,
+        "memory": memory or "",
     }
 
     # -------- Single call + fallbacks --------

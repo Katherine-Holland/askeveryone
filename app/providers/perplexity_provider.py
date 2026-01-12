@@ -1,5 +1,9 @@
+# app/providers/perplexity_provider.py
+from __future__ import annotations
+
 import httpx
-from typing import Dict, Any
+from typing import Dict, Any, List
+
 from app.config import settings
 from .base import BaseProvider, ProviderError
 
@@ -22,27 +26,55 @@ class PerplexityProvider(BaseProvider):
         system_prompt = (
             "You are Seekle (Ask Everyone). Answer the user clearly and helpfully.\n"
             f"Today's date (UTC) is {today}. If the user asks for today's date, use that.\n"
+            "For follow-up questions, infer missing context from the conversation.\n"
             "If unsure about a time-sensitive fact, say you're not sure and suggest checking sources.\n"
-            + ("Include citations/links when helpful." if want_citations else "")
+            + ("When possible, include citations/links for factual claims." if want_citations else "")
         )
 
         # ✅ Max tokens from orchestrator meta
         max_tokens = int(meta.get("max_tokens") or 800)
         if max_tokens < 64:
             max_tokens = 64
-        # Perplexity Sonar models are happy well below this
         if max_tokens > 4000:
             max_tokens = 4000
 
-        payload = {
-            "model": settings.perplexity_model or "sonar-pro",
-            "messages": [
+        # ✅ Step D: use conversation context if provided
+        msgs: List[Dict[str, str]] = []
+        raw_msgs = meta.get("messages")
+
+        if isinstance(raw_msgs, list) and raw_msgs:
+            for m in raw_msgs:
+                if not isinstance(m, dict):
+                    continue
+                role = (m.get("role") or "").strip()
+                content = (m.get("content") or "").strip()
+                if role in ("system", "user", "assistant") and content:
+                    msgs.append({"role": role, "content": content})
+
+        if msgs:
+            # Prepend our authoritative system message and drop other system messages
+            messages = [{"role": "system", "content": system_prompt}] + [
+                m for m in msgs if m.get("role") != "system"
+            ]
+        else:
+            messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query},
-            ],
+            ]
+
+        payload: Dict[str, Any] = {
+            "model": settings.perplexity_model or "sonar-pro",
+            "messages": messages,
             "temperature": 0.3,
-            "max_tokens": max_tokens,  # ✅ UPDATED
+            "max_tokens": max_tokens,
         }
+
+        # Optional: some Perplexity models/APIs support extra flags.
+        # Keep safe: only include if needed.
+        # If their API ignores it, it's fine; if it rejects unknown fields, remove.
+        # (If you see 400 "unknown field", comment this out.)
+        if want_citations:
+            payload["return_citations"] = True
 
         headers = {
             "Authorization": f"Bearer {settings.perplexity_api_key}",
@@ -52,17 +84,18 @@ class PerplexityProvider(BaseProvider):
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
                 r = await client.post(url, headers=headers, json=payload)
-                r.raise_for_status()
-                data = r.json()
+        except httpx.TimeoutException:
+            raise ProviderError("Perplexity request timed out")
+        except Exception as e:
+            raise ProviderError(f"Perplexity request failed: {type(e).__name__}")
 
-            # OpenAI-style response
-            return data["choices"][0]["message"]["content"].strip()
-
+        try:
+            r.raise_for_status()
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             body = ""
             try:
-                body = e.response.text[:400]
+                body = e.response.text[:600]
             except Exception:
                 pass
 
@@ -71,5 +104,8 @@ class PerplexityProvider(BaseProvider):
 
             raise ProviderError(f"Perplexity HTTP {status}: {body}") from e
 
-        except Exception as e:
-            raise ProviderError(f"Perplexity error: {type(e).__name__}") from e
+        data = r.json()
+        try:
+            return data["choices"][0]["message"]["content"].strip()
+        except Exception:
+            raise ProviderError("Perplexity response parsing error")
