@@ -11,6 +11,50 @@ from .base import BaseProvider, ProviderError
 class GrokProvider(BaseProvider):
     name = "GROK"
 
+    def _extract_orchestrator_system(self, meta: Dict[str, Any]) -> str:
+        raw = meta.get("messages")
+        if not isinstance(raw, list):
+            return ""
+
+        parts: List[str] = []
+        for m in raw:
+            if not isinstance(m, dict):
+                continue
+            if (m.get("role") or "").strip() != "system":
+                continue
+            c = (m.get("content") or "").strip()
+            if c:
+                parts.append(c)
+
+        out: List[str] = []
+        seen = set()
+        for p in parts:
+            if p not in seen:
+                out.append(p)
+                seen.add(p)
+
+        return "\n\n".join(out).strip()
+
+    def _build_non_system_messages(self, meta: Dict[str, Any], query: str) -> List[Dict[str, str]]:
+        raw = meta.get("messages")
+        msgs: List[Dict[str, str]] = []
+
+        if isinstance(raw, list) and raw:
+            for m in raw:
+                if not isinstance(m, dict):
+                    continue
+                role = (m.get("role") or "").strip()
+                content = (m.get("content") or "").strip()
+                if not content:
+                    continue
+                if role in ("user", "assistant"):
+                    msgs.append({"role": role, "content": content})
+
+        if msgs:
+            return msgs
+
+        return [{"role": "user", "content": query.strip()}]
+
     async def ask(self, query: str, intent: str, meta: Dict[str, Any]) -> str:
         if not settings.grok_api_key:
             raise ProviderError("GROK_API_KEY not set")
@@ -23,39 +67,18 @@ class GrokProvider(BaseProvider):
             "You are Seekle (Ask Everyone). Answer the user clearly and helpfully.\n"
             f"Today's date (UTC) is {today}. If the user asks for today's date, use that.\n"
             "For follow-up questions, infer missing context from the conversation.\n"
-            "If unsure about a time-sensitive fact, say you're not sure and suggest checking sources."
+            "Do not ask unnecessary clarification questions if the context is already present.\n"
+            "If unsure about a time-sensitive fact, say you're not sure and suggest checking sources.\n"
         )
 
-        # ✅ Max tokens from orchestrator meta
+        orch_system = self._extract_orchestrator_system(meta)
+        if orch_system:
+            system_prompt += "\n---\nConversation State:\n" + orch_system
+
         max_tokens = int(meta.get("max_tokens") or 800)
-        if max_tokens < 64:
-            max_tokens = 64
-        if max_tokens > 4000:
-            max_tokens = 4000
+        max_tokens = max(64, min(max_tokens, 4000))
 
-        # ✅ Step D: use conversation context if provided
-        msgs: List[Dict[str, str]] = []
-        raw_msgs = meta.get("messages")
-
-        if isinstance(raw_msgs, list) and raw_msgs:
-            for m in raw_msgs:
-                if not isinstance(m, dict):
-                    continue
-                role = (m.get("role") or "").strip()
-                content = (m.get("content") or "").strip()
-                if role in ("system", "user", "assistant") and content:
-                    msgs.append({"role": role, "content": content})
-
-        if msgs:
-            # Prepend our authoritative system message and drop other system messages
-            messages = [{"role": "system", "content": system_prompt}] + [
-                m for m in msgs if m.get("role") != "system"
-            ]
-        else:
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query},
-            ]
+        messages = [{"role": "system", "content": system_prompt}] + self._build_non_system_messages(meta, query)
 
         payload: Dict[str, Any] = {
             "model": settings.grok_model or "grok-beta",
@@ -75,25 +98,23 @@ class GrokProvider(BaseProvider):
         except httpx.TimeoutException:
             raise ProviderError("Grok request timed out")
         except Exception as e:
-            raise ProviderError(f"Grok request failed: {type(e).__name__}")
+            raise ProviderError(f"Grok request failed: {type(e).__name__}") from e
 
         try:
             r.raise_for_status()
         except httpx.HTTPStatusError as e:
+            status = e.response.status_code
             body = ""
             try:
                 body = e.response.text[:600]
             except Exception:
                 pass
-
-            status = e.response.status_code
             if status == 429:
                 raise ProviderError("Grok quota/rate limit hit (429).") from e
-
             raise ProviderError(f"Grok HTTP {status}: {body}") from e
 
-        data = r.json()
         try:
+            data = r.json()
             return data["choices"][0]["message"]["content"].strip()
-        except Exception:
-            raise ProviderError("Grok response parsing error")
+        except Exception as e:
+            raise ProviderError("Grok response parsing error") from e

@@ -11,6 +11,50 @@ from .base import BaseProvider, ProviderError
 class PerplexityProvider(BaseProvider):
     name = "PERPLEXITY"
 
+    def _extract_orchestrator_system(self, meta: Dict[str, Any]) -> str:
+        raw = meta.get("messages")
+        if not isinstance(raw, list):
+            return ""
+
+        parts: List[str] = []
+        for m in raw:
+            if not isinstance(m, dict):
+                continue
+            if (m.get("role") or "").strip() != "system":
+                continue
+            c = (m.get("content") or "").strip()
+            if c:
+                parts.append(c)
+
+        out: List[str] = []
+        seen = set()
+        for p in parts:
+            if p not in seen:
+                out.append(p)
+                seen.add(p)
+
+        return "\n\n".join(out).strip()
+
+    def _build_non_system_messages(self, meta: Dict[str, Any], query: str) -> List[Dict[str, str]]:
+        raw = meta.get("messages")
+        msgs: List[Dict[str, str]] = []
+
+        if isinstance(raw, list) and raw:
+            for m in raw:
+                if not isinstance(m, dict):
+                    continue
+                role = (m.get("role") or "").strip()
+                content = (m.get("content") or "").strip()
+                if not content:
+                    continue
+                if role in ("user", "assistant"):
+                    msgs.append({"role": role, "content": content})
+
+        if msgs:
+            return msgs
+
+        return [{"role": "user", "content": query.strip()}]
+
     async def ask(self, query: str, intent: str, meta: Dict[str, Any]) -> str:
         if not settings.perplexity_api_key:
             raise ProviderError("PERPLEXITY_API_KEY not set")
@@ -19,48 +63,26 @@ class PerplexityProvider(BaseProvider):
         url = f"{base_url}/chat/completions"
 
         today = meta.get("today_utc", "unknown")
-        want_citations = bool(meta.get("features", {}).get("citations", False)) or (
-            intent == "WEB_RESEARCH_CITATIONS"
-        )
+        want_citations = bool(meta.get("features", {}).get("citations", False)) or (intent == "WEB_RESEARCH_CITATIONS")
 
         system_prompt = (
             "You are Seekle (Ask Everyone). Answer the user clearly and helpfully.\n"
             f"Today's date (UTC) is {today}. If the user asks for today's date, use that.\n"
             "For follow-up questions, infer missing context from the conversation.\n"
+            "Do not ask unnecessary clarification questions if the context is already present.\n"
             "If unsure about a time-sensitive fact, say you're not sure and suggest checking sources.\n"
-            + ("When possible, include citations/links for factual claims." if want_citations else "")
         )
+        if want_citations:
+            system_prompt += "When possible, include citations/links for factual claims.\n"
 
-        # ✅ Max tokens from orchestrator meta
+        orch_system = self._extract_orchestrator_system(meta)
+        if orch_system:
+            system_prompt += "\n---\nConversation State:\n" + orch_system
+
         max_tokens = int(meta.get("max_tokens") or 800)
-        if max_tokens < 64:
-            max_tokens = 64
-        if max_tokens > 4000:
-            max_tokens = 4000
+        max_tokens = max(64, min(max_tokens, 4000))
 
-        # ✅ Step D: use conversation context if provided
-        msgs: List[Dict[str, str]] = []
-        raw_msgs = meta.get("messages")
-
-        if isinstance(raw_msgs, list) and raw_msgs:
-            for m in raw_msgs:
-                if not isinstance(m, dict):
-                    continue
-                role = (m.get("role") or "").strip()
-                content = (m.get("content") or "").strip()
-                if role in ("system", "user", "assistant") and content:
-                    msgs.append({"role": role, "content": content})
-
-        if msgs:
-            # Prepend our authoritative system message and drop other system messages
-            messages = [{"role": "system", "content": system_prompt}] + [
-                m for m in msgs if m.get("role") != "system"
-            ]
-        else:
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query},
-            ]
+        messages = [{"role": "system", "content": system_prompt}] + self._build_non_system_messages(meta, query)
 
         payload: Dict[str, Any] = {
             "model": settings.perplexity_model or "sonar-pro",
@@ -68,13 +90,6 @@ class PerplexityProvider(BaseProvider):
             "temperature": 0.3,
             "max_tokens": max_tokens,
         }
-
-        # Optional: some Perplexity models/APIs support extra flags.
-        # Keep safe: only include if needed.
-        # If their API ignores it, it's fine; if it rejects unknown fields, remove.
-        # (If you see 400 "unknown field", comment this out.)
-        if want_citations:
-            payload["return_citations"] = True
 
         headers = {
             "Authorization": f"Bearer {settings.perplexity_api_key}",
@@ -87,7 +102,7 @@ class PerplexityProvider(BaseProvider):
         except httpx.TimeoutException:
             raise ProviderError("Perplexity request timed out")
         except Exception as e:
-            raise ProviderError(f"Perplexity request failed: {type(e).__name__}")
+            raise ProviderError(f"Perplexity request failed: {type(e).__name__}") from e
 
         try:
             r.raise_for_status()
@@ -98,14 +113,12 @@ class PerplexityProvider(BaseProvider):
                 body = e.response.text[:600]
             except Exception:
                 pass
-
             if status == 429:
                 raise ProviderError("Perplexity quota/rate limit hit (429).") from e
-
             raise ProviderError(f"Perplexity HTTP {status}: {body}") from e
 
-        data = r.json()
         try:
+            data = r.json()
             return data["choices"][0]["message"]["content"].strip()
-        except Exception:
-            raise ProviderError("Perplexity response parsing error")
+        except Exception as e:
+            raise ProviderError("Perplexity response parsing error") from e
