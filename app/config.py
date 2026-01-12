@@ -77,37 +77,39 @@ class Settings(BaseModel):
     mail_from: str = _env_str("MAIL_FROM", "")
 
     # ---- Billing / credits ----
-    # You asked: logged-in users get 5 free/day, anonymous gets 0 free.
-    free_daily_limit: int = _env_int("FREE_DAILY_LIMIT", 5)         # free queries/day for logged-in free users
-    credits_per_query: int = _env_int("CREDITS_PER_QUERY", 1)       # 1 credit = 1 query
+    free_daily_limit: int = _env_int("FREE_DAILY_LIMIT", 5)
+    credits_per_query: int = _env_int("CREDITS_PER_QUERY", 1)
     assumed_cost_per_query_usd: float = _env_float("ASSUMED_COST_PER_QUERY_USD", 0.005)
 
-    # Hard anti-rinse limits (until we trust usage)
-    # free users: cap per 24h (defaults to FREE_DAILY_LIMIT, but can be higher if you want)
     free_daily_cap: int = _env_int("FREE_DAILY_CAP", 5)
-    # paid users: still capped per 24h initially
     paid_daily_cap: int = _env_int("PAID_DAILY_CAP", 50)
 
-    # Token caps by tier (providers read meta["max_tokens"])
-    # Keep these modest for now; you can increase later.
     max_tokens_free: int = _env_int("MAX_TOKENS_FREE", 350)
     max_tokens_paid: int = _env_int("MAX_TOKENS_PAID", 800)
 
-    # Circuit breaker cooldown
     provider_cooldown_minutes: int = _env_int("PROVIDER_COOLDOWN_MINUTES", 10)
 
     # Stripe
     stripe_secret_key: str = _env_str("STRIPE_SECRET_KEY", "")
     stripe_webhook_secret: str = _env_str("STRIPE_WEBHOOK_SECRET", "")
 
-    # Anonymous heuristic (no Turnstile)
-    global_free_pool_per_day: int = int(os.getenv("GLOBAL_FREE_POOL_PER_DAY", "300"))
-    global_free_pool_key: str = os.getenv("GLOBAL_FREE_POOL_KEY", "free_pool")
-    anon_free_per_24h: int = int(os.getenv("ANON_FREE_PER_24H", "1"))
-    anon_key_salt: str = os.getenv("ANON_KEY_SALT", "change-me-please")  # set in Render
+    # ---- Anonymous gating (Step B fix: restore 1–2 prompts before login) ----
+    # Global pool cap (UTC day)
+    anon_global_pool_per_day: int = _env_int("ANON_GLOBAL_POOL_PER_DAY", 300)
+    anon_global_pool_key: str = _env_str("ANON_GLOBAL_POOL_KEY", "free_pool")
 
-    # NEW: per-session anon allowance (UTC day). Default 2 to tolerate double submits.
+    # Per-key cap (IP+UA hash) per UTC day (set to 2 to allow “one or two prompts”)
+    anon_free_per_24h: int = _env_int("ANON_FREE_PER_24H", 2)
+
+    # Per-session cap per UTC day (default 2 to tolerate double-submit and allow 2 prompts)
     anon_session_free_per_day: int = _env_int("ANON_SESSION_FREE_PER_DAY", 2)
+
+    anon_key_salt: str = _env_str("ANON_KEY_SALT", "change-me-please")
+
+    # ---- Memory + conversation (Step 2C knobs) ----
+    conversation_history_limit: int = _env_int("CONVERSATION_HISTORY_LIMIT", 16)
+    memory_update_every_n_turns: int = _env_int("MEMORY_UPDATE_EVERY_N_TURNS", 6)
+    max_memory_chars: int = _env_int("MAX_MEMORY_CHARS", 1200)
 
     # Price IDs -> credits
     stripe_price_starter: str = _env_str("STRIPE_PRICE_STARTER", "")
@@ -117,12 +119,6 @@ class Settings(BaseModel):
     credits_starter: int = _env_int("CREDITS_STARTER", 200)
     credits_plus: int = _env_int("CREDITS_PLUS", 450)
     credits_power: int = _env_int("CREDITS_POWER", 1200)
-
-    # Conversation / memory
-    conversation_history_limit: int = _env_int("CONVERSATION_HISTORY_LIMIT", 16)
-    memory_update_every_n_turns: int = _env_int("MEMORY_UPDATE_EVERY_N_TURNS", 6)
-    max_memory_chars: int = _env_int("MAX_MEMORY_CHARS", 1200)
-
 
 
 settings = Settings()
