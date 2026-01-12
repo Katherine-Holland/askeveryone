@@ -1,11 +1,12 @@
 # app/main.py
 from __future__ import annotations
 
-import re
-import uuid
-import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
+import httpx
+import uuid
+from datetime import datetime, timezone
+
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -20,6 +21,7 @@ from app.db import billing_repo
 
 # conversation + memory
 from app.db import memory_repo
+from app.memory_summarizer import build_transcript, summarize_with_openai
 
 # anon gate
 from app.security.anon_gate import (
@@ -95,6 +97,10 @@ def _safe_commit(db) -> None:
 
 
 def _insert_message(db, *, session_id: str, role: str, content: str) -> None:
+    """
+    Best-effort message logging.
+    If it fails, rollback so we don't poison the session for later work.
+    """
     try:
         db.execute(
             text(
@@ -141,79 +147,68 @@ def _anon_session_used_today(db, session_id: str) -> int:
     return int(row[0]) if row else 0
 
 
-def _should_update_state(turn_count: int) -> bool:
-    n = int(getattr(settings, "memory_update_every_n_turns", 2))
+def _should_update_memory(turn_count: int) -> bool:
+    n = int(getattr(settings, "memory_update_every_n_turns", 6))
     if n <= 0:
         return False
     return (turn_count % n) == 0
 
 
-# ----------------------------
-# Phase 2B: Deterministic state extractor
-# ----------------------------
-_DEST_PATTERNS = [
-    re.compile(r"\bmoon\b", re.I),
-    re.compile(r"\bmars\b", re.I),
-    re.compile(r"\bnew york\b", re.I),
-    re.compile(r"\bcalifornia\b", re.I),
-    re.compile(r"\beu\b", re.I),
-]
-
-
-def _extract_state_from_recent(recent_msgs, prev_state: dict | None = None) -> dict:
+async def _maybe_update_memory(db, session_id: str) -> None:
     """
-    Rule-based, low-drift state update.
-    Only uses actual transcript lines, never invents facts.
+    Step 2D:
+    - Pull a transcript window
+    - Run strict memory summariser
+    - Upsert memory (with digest if supported)
+    Never raises.
     """
-    state = dict(prev_state or {})
+    try:
+        # current turn count
+        row = db.execute(
+            text("select count(*) from messages where session_id=:sid"),
+            {"sid": session_id},
+        ).fetchone()
+        turn_count = int(row[0]) if row else 0
 
-    # initialize keys
-    state.setdefault("topic", "")
-    state.setdefault("entities", {})
-    state.setdefault("facts", [])
-    state.setdefault("preferences", [])
-    state.setdefault("open_questions", [])
+        if not _should_update_memory(turn_count):
+            return
 
-    entities = state.get("entities") or {}
-    if not isinstance(entities, dict):
-        entities = {}
-    state["entities"] = entities
+        # fetch transcript window for summarisation
+        msg_window = int(getattr(settings, "memory_summary_window", 40))
+        recent = memory_repo.get_recent_messages_for_summary(db, session_id, limit=msg_window)
 
-    # look at recent user messages
-    user_texts = [m.get("content", "") for m in recent_msgs if m.get("role") == "user"]
-    joined = "\n".join([t for t in user_texts if t]).strip()
+        transcript = build_transcript(recent, max_chars=9000)
 
-    # Detect destination-like entity
-    dest = entities.get("destination", "")
-    if not dest:
-        for pat in _DEST_PATTERNS:
-            if pat.search(joined):
-                entities["destination"] = pat.pattern.strip("\\b").replace("\\", "").replace("(?i)", "").upper()
-                # Normalize a bit (moon/mars/etc)
-                entities["destination"] = "moon" if "moon" in pat.pattern.lower() else entities["destination"].lower()
-                break
+        prev_summary, prev_digest = memory_repo.get_memory_and_digest(db, session_id)
 
-    # Detect “coding / building” mode
-    if "code" in joined.lower() or "build" in joined.lower() or "fastapi" in joined.lower():
-        if not state.get("topic"):
-            state["topic"] = "Building Seekle backend"
-        # preference: systematic steps (you asked for one-at-a-time)
-        pref = "User prefers step-by-step, one change at a time."
-        if pref not in state["preferences"]:
-            state["preferences"].append(pref)
+        # If digest matches, skip (prevents re-summarising same content)
+        # If no digest column exists, prev_digest will be "" so we won't skip.
+        # The summariser returns digest for the transcript chunk.
+        today_utc = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
-    # If the user asks a follow-up “how long to get there”, mark as open thread
-    if re.search(r"\bhow long\b", joined.lower()) and ("get there" in joined.lower() or "take" in joined.lower()):
-        oq = "User asked for travel time to destination mentioned earlier."
-        if oq not in state["open_questions"]:
-            state["open_questions"].append(oq)
+        new_summary, new_digest = await summarize_with_openai(
+            previous_memory=prev_summary,
+            transcript=transcript,
+            today_utc=today_utc,
+            timeout_s=45.0,
+        )
 
-    # Keep lists bounded (prevent bloat)
-    state["facts"] = (state.get("facts") or [])[:20]
-    state["preferences"] = (state.get("preferences") or [])[:20]
-    state["open_questions"] = (state.get("open_questions") or [])[:20]
+        if prev_digest and new_digest and (prev_digest == new_digest):
+            return
 
-    return state
+        max_chars = int(getattr(settings, "max_memory_chars", 1200))
+        new_summary = (new_summary or "").strip()[:max_chars]
+
+        if not new_summary:
+            return
+
+        # store digest if column exists; repo falls back if not
+        memory_repo.upsert_memory(db, session_id, new_summary, digest=new_digest)
+        _safe_commit(db)
+
+    except Exception:
+        _safe_rollback(db)
+        return
 
 
 @app.get("/diagnostics/openai_ping")
@@ -246,8 +241,6 @@ async def root():
             "/diagnostics/providers",
             "/billing/status",
             "/billing/webhook/stripe",
-            "/chat/export",
-            "/chat/import",
         ],
     }
 
@@ -279,7 +272,7 @@ async def ask(req: AskRequest, request: Request):
             _safe_rollback(db)
             raise HTTPException(status_code=500, detail="Failed to initialize session")
 
-        # Resolve user_id
+        # Resolve user_id from session
         user_id = None
         try:
             row = db.execute(
@@ -291,17 +284,17 @@ async def ask(req: AskRequest, request: Request):
             _safe_rollback(db)
             user_id = None
 
-        # Load conversation + state
+        # Load conversation + memory (2C + 2D)
         history_limit = int(getattr(settings, "conversation_history_limit", 16))
         conversation = []
-        state = {}
+        memory = ""
         try:
             conversation = memory_repo.get_recent_messages(db, req.session_id, limit=history_limit)
-            state = memory_repo.get_state(db, req.session_id)
+            memory = memory_repo.get_memory(db, req.session_id)
         except Exception:
             _safe_rollback(db)
             conversation = []
-            state = {}
+            memory = ""
 
         # -------------------------
         # Anonymous gating
@@ -311,22 +304,24 @@ async def ask(req: AskRequest, request: Request):
             ua = _norm_ua(request.headers.get("user-agent"))
             key_hash = build_anon_key(ip=ip, user_agent=ua)
 
-            anon_global_cap = int(getattr(settings, "anon_global_pool_per_day", 200))
-            anon_key_cap = int(getattr(settings, "anon_free_per_24h", 1))
+            anon_global_cap = int(getattr(settings, "anon_global_pool_per_day", 300))
+            anon_key_cap = int(getattr(settings, "anon_free_per_24h", 2))
+            anon_session_cap = int(getattr(settings, "anon_session_free_per_day", 2))
 
+            # 0) Per-session cap (UTC day)
             try:
                 used_session_today = _anon_session_used_today(db, req.session_id)
             except Exception:
                 _safe_rollback(db)
                 used_session_today = 10**9
 
-            anon_session_cap = int(getattr(settings, "anon_session_free_per_day", 2))
             if used_session_today >= anon_session_cap:
                 raise HTTPException(
                     status_code=402,
                     detail="Create a free account to save your conversation and continue searching.",
                 )
 
+            # 1) Global pool cap
             try:
                 used_global = anon_global_used_today(db)
             except Exception:
@@ -339,6 +334,7 @@ async def ask(req: AskRequest, request: Request):
                     detail="Free access is busy right now. Create a free account to continue and save your conversation.",
                 )
 
+            # 2) Per-key cap
             try:
                 used_key = anon_allowance_used_today(db, key_hash)
             except Exception:
@@ -351,13 +347,17 @@ async def ask(req: AskRequest, request: Request):
                     detail="Create a free account to save your conversation and continue searching.",
                 )
 
+            # 3) Record usage BEFORE calling providers
             try:
                 record_anon_use_today(db, key_hash)
                 record_anon_global_use_today(db)
                 _safe_commit(db)
             except Exception:
                 _safe_rollback(db)
-                raise HTTPException(status_code=429, detail="Temporary protection triggered. Please create a free account to continue.")
+                raise HTTPException(
+                    status_code=429,
+                    detail="Temporary protection triggered. Please create a free account to continue.",
+                )
 
             _insert_message(db, session_id=req.session_id, role="user", content=req.query)
 
@@ -368,76 +368,77 @@ async def ask(req: AskRequest, request: Request):
                 compare=bool(getattr(req, "compare", False)),
                 max_tokens=max_tokens_for_tier(is_paid=False),
                 conversation=conversation,
-                state=state,
+                memory=memory,
             )
 
             _insert_message(db, session_id=req.session_id, role="assistant", content=result.get("answer", ""))
 
-        else:
-            # -------------------------
-            # Logged-in policy
-            # -------------------------
-            try:
-                billing_repo.ensure_wallet_and_plan(db, user_id)
-                plan = billing_repo.get_user_plan(db, user_id)
-            except Exception:
-                _safe_rollback(db)
-                plan = "free"
+            # Step 2D memory update (non-blocking / fail-open)
+            await _maybe_update_memory(db, req.session_id)
 
-            is_paid = (plan == "paid")
-
-            try:
-                used_24h = billing_repo.count_queries_last_24h(db, user_id=user_id)
-            except Exception:
-                _safe_rollback(db)
-                used_24h = 10**9
-
-            limit_24h = daily_limit_for_user(is_paid=is_paid)
-            if used_24h >= limit_24h:
-                raise HTTPException(status_code=429, detail="Daily query limit reached. Create an account or upgrade to continue.")
-
-            require_credits = (not is_paid) and (used_24h >= settings.free_daily_limit)
-            if require_credits:
-                try:
-                    ok = billing_repo.spend_credits(db, user_id=user_id, amount=settings.credits_per_query, reason="query")
-                except Exception:
-                    _safe_rollback(db)
-                    ok = False
-                if not ok:
-                    raise HTTPException(status_code=402, detail="Out of credits. Purchase more to continue.")
-
-            _insert_message(db, session_id=req.session_id, role="user", content=req.query)
-
-            result = await run_pipeline(
-                query=req.query,
-                session_id=req.session_id,
-                user_id=user_id,
-                compare=bool(getattr(req, "compare", False)),
-                max_tokens=max_tokens_for_tier(is_paid=is_paid),
-                conversation=conversation,
-                state=state,
-            )
-
-            _insert_message(db, session_id=req.session_id, role="assistant", content=result.get("answer", ""))
+            return AskResponse(**result)
 
         # -------------------------
-        # Phase 2B: Update state deterministically
+        # Logged-in policy
         # -------------------------
         try:
-            row = db.execute(
-                text("select count(*) from messages where session_id=:sid"),
-                {"sid": req.session_id},
-            ).fetchone()
-            turn_count = int(row[0]) if row else 0
-
-            if _should_update_state(turn_count):
-                recent = memory_repo.get_recent_messages(db, req.session_id, limit=24)
-                prev = memory_repo.get_state(db, req.session_id)
-                new_state = _extract_state_from_recent(recent, prev_state=prev)
-                memory_repo.upsert_state(db, req.session_id, new_state)
-                _safe_commit(db)
+            billing_repo.ensure_wallet_and_plan(db, user_id)
+            plan = billing_repo.get_user_plan(db, user_id)
         except Exception:
             _safe_rollback(db)
+            plan = "free"
+
+        is_paid = (plan == "paid")
+
+        # Hard daily cap
+        try:
+            used_24h = billing_repo.count_queries_last_24h(db, user_id=user_id)
+        except Exception:
+            _safe_rollback(db)
+            used_24h = 10**9
+
+        limit_24h = daily_limit_for_user(is_paid=is_paid)
+        if used_24h >= limit_24h:
+            raise HTTPException(
+                status_code=429,
+                detail="Daily query limit reached. Create an account or upgrade to continue.",
+            )
+
+        require_credits = (not is_paid) and (used_24h >= settings.free_daily_limit)
+        if require_credits:
+            try:
+                ok = billing_repo.spend_credits(
+                    db,
+                    user_id=user_id,
+                    amount=settings.credits_per_query,
+                    reason="query",
+                )
+            except Exception:
+                _safe_rollback(db)
+                ok = False
+
+            if not ok:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Out of credits. Purchase more to continue.",
+                )
+
+        _insert_message(db, session_id=req.session_id, role="user", content=req.query)
+
+        result = await run_pipeline(
+            query=req.query,
+            session_id=req.session_id,
+            user_id=user_id,
+            compare=bool(getattr(req, "compare", False)),
+            max_tokens=max_tokens_for_tier(is_paid=is_paid),
+            conversation=conversation,
+            memory=memory,
+        )
+
+        _insert_message(db, session_id=req.session_id, role="assistant", content=result.get("answer", ""))
+
+        # Step 2D memory update
+        await _maybe_update_memory(db, req.session_id)
 
         return AskResponse(**result)
 
@@ -487,6 +488,16 @@ async def diagnostics_providers():
             "api_key_set": bool(settings.gemini_api_key),
             "base_url": settings.gemini_base_url,
             "model": settings.gemini_model,
+        },
+        "LLAMA": {
+            "api_key_set": bool(settings.llama_api_key),
+            "base_url": settings.llama_base_url,
+            "model": settings.llama_model,
+        },
+        "HUGGINGFACE": {
+            "api_key_set": bool(settings.huggingface_api_key),
+            "base_url": settings.huggingface_base_url,
+            "model": settings.huggingface_model,
         },
         "DATABASE": {"database_url_set": bool(settings.database_url)},
     }

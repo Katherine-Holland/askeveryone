@@ -110,6 +110,8 @@ class Settings(BaseModel):
     conversation_history_limit: int = _env_int("CONVERSATION_HISTORY_LIMIT", 16)
     memory_update_every_n_turns: int = _env_int("MEMORY_UPDATE_EVERY_N_TURNS", 6)
     max_memory_chars: int = _env_int("MAX_MEMORY_CHARS", 1200)
+    memory_summary_window: int = _env_int("MEMORY_SUMMARY_WINDOW", 40)
+    memory_max_tokens: int = _env_int("MEMORY_MAX_TOKENS", 350)
 
     # Price IDs -> credits
     stripe_price_starter: str = _env_str("STRIPE_PRICE_STARTER", "")
