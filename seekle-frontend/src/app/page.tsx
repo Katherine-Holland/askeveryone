@@ -30,9 +30,14 @@ export default function Home() {
 
   const [loginOpen, setLoginOpen] = useState(false);
 
+  // Optional: dev-only debug visibility (off by default)
+  const [debug, setDebug] = useState(false);
+
   useEffect(() => {
     setMounted(true);
     setSessionId(getOrCreateSessionId());
+    // Only allow debug rendering in development
+    if (process.env.NODE_ENV === "development") setDebug(false);
   }, []);
 
   async function runAsk() {
@@ -45,6 +50,9 @@ export default function Home() {
     try {
       const out = await askBackend({ query: q, session_id: sessionId });
       setResp(out);
+
+      // ✅ UX: clear the input after sending
+      setQuery("");
     } catch (err: any) {
       if (isPaywallError(err)) {
         setLoginOpen(true);
@@ -56,6 +64,8 @@ export default function Home() {
       setLoading(false);
     }
   }
+
+  const canShowDebug = process.env.NODE_ENV === "development";
 
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-zinc-50 text-zinc-900">
@@ -107,13 +117,20 @@ export default function Home() {
           ) : null}
         </div>
 
-        {mounted ? (
-          <div className="mt-8 text-center text-xs text-zinc-400">
-            Session: {sessionId}
+        {/* ✅ Session ID hidden from users. Dev-only debug toggle if you want it. */}
+        {mounted && canShowDebug ? (
+          <div className="mt-8 flex items-center justify-center gap-3 text-xs text-zinc-400">
+            <button
+              type="button"
+              onClick={() => setDebug((v) => !v)}
+              className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-zinc-500 hover:text-zinc-700"
+            >
+              {debug ? "Hide debug" : "Show debug"}
+            </button>
+
+            {debug ? <span className="select-all">Session: {sessionId}</span> : null}
           </div>
-        ) : (
-          <div className="mt-8 text-center text-xs text-zinc-400">Session: …</div>
-        )}
+        ) : null}
 
         <LoginModal
           open={loginOpen}
