@@ -77,8 +77,6 @@ def _extract_destination_like_phrase(text: str) -> str:
       - "how long to get there"
       - "how far is it"
     We try to find last mentioned obvious destination in the recent user message.
-    This isn't perfect, but it prevents the model from asking "where are you going?"
-    when the earlier conversation already contained "moon", "paris", etc.
     """
     if not text:
         return ""
@@ -102,8 +100,20 @@ def _detect_followup(query: str) -> bool:
     if not q:
         return False
     follow_markers = [
-        "how long", "how far", "what about", "what if", "can i", "could i", "and then",
-        "get there", "that", "it", "there", "this", "them", "those",
+        "how long",
+        "how far",
+        "what about",
+        "what if",
+        "can i",
+        "could i",
+        "and then",
+        "get there",
+        "that",
+        "it",
+        "there",
+        "this",
+        "them",
+        "those",
     ]
     return any(p in q for p in follow_markers)
 
@@ -126,17 +136,14 @@ def _derive_conversation_state(
     last_topic_hint = _last_user_topic(conversation)
     mem_hint = (memory or "").strip()
 
-    # If it's a follow-up, give the model an explicit instruction to resolve references
     followup_note = ""
     if followup:
-        # try to infer a destination-like phrase from earlier context
         dest = _extract_destination_like_phrase(last_topic_hint) or _extract_destination_like_phrase(mem_hint)
         if dest:
             followup_note = f"Follow-up detected. Likely referent/destination: {dest}."
         else:
             followup_note = "Follow-up detected. Resolve pronouns like 'there/it/that' using prior turns."
 
-    # Keep it short + structured
     lines: List[str] = []
     if mem_hint:
         lines.append("Memory summary (stored):")
@@ -150,7 +157,6 @@ def _derive_conversation_state(
         lines.append("Follow-up resolution:")
         lines.append(followup_note)
 
-    # Add a compact “current intent” label (can help when routing switches providers)
     if intent:
         lines.append(f"Router intent: {intent}")
 
@@ -171,12 +177,12 @@ def _build_messages(
     """
     msgs: List[Dict[str, str]] = []
 
-    # Deterministic conversation state (Step 2C)
+    # Deterministic conversation state
     conv_state = _derive_conversation_state(query=query, intent=intent, conversation=conversation, memory=memory)
     if conv_state:
         msgs.append({"role": "system", "content": f"Conversation State (deterministic):\n{conv_state}"})
 
-    # A single general system instruction (kept minimal on purpose)
+    # Minimal general system instruction
     system_lines = [
         "You are Seekle, a helpful assistant.",
         "Use the conversation state and prior turns to answer follow-ups directly.",
@@ -241,7 +247,7 @@ async def call_provider_logged(db, query_uuid, provider_name: str, query: str, i
 
         return answer
 
-    except Exception as e:
+    except Exception:
         latency_ms = int((time.perf_counter() - start) * 1000)
 
         if db and pc_id:
@@ -251,7 +257,7 @@ async def call_provider_logged(db, query_uuid, provider_name: str, query: str, i
                     call_id=pc_id,
                     success=False,
                     latency_ms=latency_ms,
-                    error_code=type(e).__name__,
+                    error_code="PROVIDER_ERROR",
                 )
             except Exception:
                 _safe_db_rollback(db)
@@ -267,6 +273,10 @@ async def run_pipeline(
     max_tokens: int = 500,
     conversation: Optional[List[Dict[str, str]]] = None,
     memory: str = "",
+    # ✅ Backwards-compat: older callers still pass state=...
+    state: Optional[Dict[str, Any]] = None,
+    # ✅ Future-proof: ignore unknown kwargs instead of 500'ing
+    **kwargs,
 ) -> Dict[str, Any]:
     t0 = time.perf_counter()
     query_uuid = uuid.uuid4()
@@ -345,13 +355,14 @@ async def run_pipeline(
     confidence = float(plan.get("confidence", 0.5))
     multi_call = bool(plan.get("multi_call", False))
 
+    # Multi-call only if explicitly requested
     if not compare:
         multi_call = False
 
     providers_called: List[str] = []
     today_utc = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
-    # Step 2C: build normalized messages with conversation state
+    # Build normalized messages with deterministic conversation state
     messages = _build_messages(
         query=query,
         intent=intent,
@@ -360,7 +371,7 @@ async def run_pipeline(
         today_utc=today_utc,
     )
 
-    meta = {
+    meta: Dict[str, Any] = {
         "query_id": str(query_uuid),
         "session_id": session_id,
         "user_id": str(user_id) if user_id else None,
@@ -372,6 +383,10 @@ async def run_pipeline(
         "messages": messages,
         "memory": memory,
     }
+
+    # ✅ Back-compat: preserve "state" if callers still provide it
+    if state and isinstance(state, dict):
+        meta["state"] = state
 
     # -------- Single call + fallbacks --------
     if not multi_call:
