@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { askBackend, isPaywallError, type AskResponse } from "@/lib/api";
 import LoginModal from "@/components/LoginModal";
+import AccountMenu from "@/components/AccountMenu";
 
 function getOrCreateSessionId(): string {
   const key = "seekle_session_id";
@@ -14,6 +15,16 @@ function getOrCreateSessionId(): string {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random()}`;
 
+  localStorage.setItem(key, id);
+  return id;
+}
+
+function resetSessionId(): string {
+  const key = "seekle_session_id";
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random()}`;
   localStorage.setItem(key, id);
   return id;
 }
@@ -36,7 +47,6 @@ export default function Home() {
   useEffect(() => {
     setMounted(true);
     setSessionId(getOrCreateSessionId());
-    // Only allow debug rendering in development
     if (process.env.NODE_ENV === "development") setDebug(false);
   }, []);
 
@@ -50,9 +60,7 @@ export default function Home() {
     try {
       const out = await askBackend({ query: q, session_id: sessionId });
       setResp(out);
-
-      // ✅ UX: clear the input after sending
-      setQuery("");
+      setQuery(""); // ✅ clears input after asking
     } catch (err: any) {
       if (isPaywallError(err)) {
         setLoginOpen(true);
@@ -67,15 +75,42 @@ export default function Home() {
 
   const canShowDebug = process.env.NODE_ENV === "development";
 
+  function onLogout() {
+    // Clear UI + create a fresh anonymous session id
+    setResp(null);
+    setError(null);
+    setQuery("");
+
+    const newId = resetSessionId();
+    setSessionId(newId);
+  }
+
+  function onUpgrade() {
+    // Task: we'll build /pricing next, but for now route there.
+    window.location.href = "/pricing";
+  }
+
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-zinc-50 text-zinc-900">
       <div className="w-full max-w-2xl">
-        <div className="text-center mb-8">
-          <h1 className="text-5xl font-semibold tracking-tight">Seekle</h1>
-          <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
+        {/* Top row: brand left, account right */}
+        <div className="flex items-center justify-between mb-8">
+          <div className="text-left">
+            <h1 className="text-4xl font-semibold tracking-tight">Seekle</h1>
+            <p className="mt-2 text-sm text-zinc-600">Ask Everyone.</p>
+          </div>
+
+          {mounted ? (
+            <AccountMenu
+              sessionId={sessionId}
+              onLogout={onLogout}
+              onUpgrade={onUpgrade}
+              usageLabel={undefined} // placeholder for now
+            />
+          ) : null}
         </div>
 
-        {/* No <form> — avoids any chance of navigation refresh */}
+        {/* No <form> — avoids refresh */}
         <div className="flex gap-2 items-center">
           <input
             value={query}
@@ -117,7 +152,7 @@ export default function Home() {
           ) : null}
         </div>
 
-        {/* ✅ Session ID hidden from users. Dev-only debug toggle if you want it. */}
+        {/* Dev-only debug toggle */}
         {mounted && canShowDebug ? (
           <div className="mt-8 flex items-center justify-center gap-3 text-xs text-zinc-400">
             <button
@@ -132,11 +167,7 @@ export default function Home() {
           </div>
         ) : null}
 
-        <LoginModal
-          open={loginOpen}
-          onClose={() => setLoginOpen(false)}
-          sessionId={sessionId}
-        />
+        <LoginModal open={loginOpen} onClose={() => setLoginOpen(false)} sessionId={sessionId} />
       </div>
     </main>
   );
