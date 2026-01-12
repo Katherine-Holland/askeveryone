@@ -9,5 +9,14 @@ class SessionMemory(Base):
     __tablename__ = "session_memory"
 
     session_id = Column(String, primary_key=True)
-    summary = Column(Text, nullable=False, default="")
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Structured state stored as JSON (string)
+    # Example: {"topic":"Moon travel","facts":["User asked about the moon"],"entities":{"destination":"moon"},...}
+    state_json = Column(Text, nullable=False, default="{}")
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

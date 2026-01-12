@@ -1,6 +1,4 @@
 # app/orchestrator.py
-from __future__ import annotations
-
 import time
 import uuid
 from typing import Dict, Any, List, Optional
@@ -21,7 +19,6 @@ from app.providers.base import ProviderError
 
 from app.db.session import get_session
 from app.db import repo as dbrepo
-from app.db import memory_repo
 
 from app.limits import cooldown_provider, is_provider_available
 
@@ -63,11 +60,67 @@ def _safe_db_close(db) -> None:
         pass
 
 
+def _format_state_for_prompt(state: Dict[str, Any]) -> str:
+    """
+    Deterministic, low-drift representation of conversation state.
+    """
+    if not state:
+        return ""
+
+    lines: List[str] = []
+    topic = (state.get("topic") or "").strip()
+    if topic:
+        lines.append(f"Topic: {topic}")
+
+    # Entities (destination, location, project, etc.)
+    entities = state.get("entities") or {}
+    if isinstance(entities, dict) and entities:
+        pairs = []
+        for k, v in entities.items():
+            if v is None:
+                continue
+            sv = str(v).strip()
+            if sv:
+                pairs.append(f"{k}={sv}")
+        if pairs:
+            lines.append("Entities: " + ", ".join(pairs))
+
+    # Facts
+    facts = state.get("facts") or []
+    if isinstance(facts, list) and facts:
+        facts_clean = [str(x).strip() for x in facts if str(x).strip()]
+        if facts_clean:
+            lines.append("Known facts:")
+            for f in facts_clean[:8]:
+                lines.append(f"- {f}")
+
+    # User preferences (style, constraints)
+    prefs = state.get("preferences") or []
+    if isinstance(prefs, list) and prefs:
+        prefs_clean = [str(x).strip() for x in prefs if str(x).strip()]
+        if prefs_clean:
+            lines.append("Preferences:")
+            for p in prefs_clean[:8]:
+                lines.append(f"- {p}")
+
+    # Open threads / questions
+    openq = state.get("open_questions") or []
+    if isinstance(openq, list) and openq:
+        oq = [str(x).strip() for x in openq if str(x).strip()]
+        if oq:
+            lines.append("Open threads:")
+            for q in oq[:6]:
+                lines.append(f"- {q}")
+
+    return "\n".join(lines).strip()
+
+
 def _build_messages(
     *,
     query: str,
+    intent: str,
     conversation: Optional[List[Dict[str, str]]] = None,
-    memory: str = "",
+    state: Optional[Dict[str, Any]] = None,
     today_utc: str = "",
 ) -> List[Dict[str, str]]:
     """
@@ -78,16 +131,17 @@ def _build_messages(
 
     system_lines = [
         "You are Seekle, a helpful assistant.",
-        "Use the conversation to answer follow-up questions directly.",
-        "Infer missing context from prior turns (e.g., destinations, subjects, entities).",
-        "Do not ask the user for their location unless the question truly requires it (e.g., 'near me').",
+        "You must answer follow-up questions using the conversation context.",
+        "Do NOT ask the user 'where are you going?' if the destination is in the conversation state or recent messages.",
+        "If context is truly missing, ask ONE concise clarification question.",
     ]
     if today_utc:
         system_lines.append(f"Today's date (UTC): {today_utc}")
 
-    # Optional memory summary: comes first
-    if memory and memory.strip():
-        msgs.append({"role": "system", "content": f"Conversation memory (may be incomplete):\n{memory.strip()}"})
+    # Conversation state comes first (deterministic)
+    state_text = _format_state_for_prompt(state or {})
+    if state_text:
+        msgs.append({"role": "system", "content": "Conversation State (authoritative):\n" + state_text})
 
     # Main system instruction
     msgs.append({"role": "system", "content": "\n".join(system_lines)})
@@ -95,8 +149,6 @@ def _build_messages(
     # Prior conversation (oldest -> newest)
     if conversation:
         for m in conversation:
-            if not isinstance(m, dict):
-                continue
             role = (m.get("role") or "").strip()
             content = (m.get("content") or "").strip()
             if not role or not content:
@@ -106,7 +158,7 @@ def _build_messages(
             msgs.append({"role": role, "content": content})
 
     # Current user turn last
-    msgs.append({"role": "user", "content": (query or "").strip()})
+    msgs.append({"role": "user", "content": query.strip()})
 
     return msgs
 
@@ -118,22 +170,10 @@ async def call_provider(provider_name: str, query: str, intent: str, meta: Dict[
     return await provider.ask(query=query, intent=intent, meta=meta)
 
 
-async def call_provider_logged(
-    db,
-    query_uuid,
-    provider_name: str,
-    query: str,
-    intent: str,
-    meta: Dict[str, Any],
-) -> str:
-    """
-    Logs provider call start/end into Neon.
-    If DB is unavailable/broken, falls back to direct provider call.
-    """
+async def call_provider_logged(db, query_uuid, provider_name: str, query: str, intent: str, meta: Dict[str, Any]) -> str:
     pc_id = None
     start = time.perf_counter()
 
-    # Try to log "start"
     if db:
         try:
             pc = dbrepo.create_provider_call(db, query_id=query_uuid, provider=provider_name)
@@ -161,9 +201,8 @@ async def call_provider_logged(
 
         return answer
 
-    except Exception as e:
+    except Exception:
         latency_ms = int((time.perf_counter() - start) * 1000)
-
         if db and pc_id:
             try:
                 dbrepo.finish_provider_call(
@@ -171,11 +210,10 @@ async def call_provider_logged(
                     call_id=pc_id,
                     success=False,
                     latency_ms=latency_ms,
-                    error_code=type(e).__name__,
+                    error_code="ProviderError",
                 )
             except Exception:
                 _safe_db_rollback(db)
-
         raise
 
 
@@ -186,7 +224,7 @@ async def run_pipeline(
     compare: bool = False,
     max_tokens: int = 500,
     conversation: Optional[List[Dict[str, str]]] = None,
-    memory: str = "",
+    state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     t0 = time.perf_counter()
     query_uuid = uuid.uuid4()
@@ -196,7 +234,6 @@ async def run_pipeline(
 
     db = get_session()
 
-    # Create initial query row (never poison the pipeline)
     if db:
         try:
             dbrepo.create_query(
@@ -211,63 +248,28 @@ async def run_pipeline(
         except Exception:
             _safe_db_rollback(db)
 
-    # If caller didn't pass conversation/memory, try best-effort load here too.
-    # This makes the orchestrator resilient and keeps behavior consistent.
-    if db and session_id:
-        try:
-            if conversation is None:
-                conversation = memory_repo.get_recent_messages(db, session_id, limit=16)
-            if not memory:
-                memory = memory_repo.get_memory(db, session_id)
-        except Exception:
-            _safe_db_rollback(db)
-            conversation = conversation or []
-            memory = memory or ""
-
-    # Decide routing plan
     if pre.get("short_circuit"):
         intent_hint = pre.get("pre_intent_hint")
-
         if intent_hint == "LIVE_FRESH":
-            plan = {
-                "intent": intent_hint,
-                "provider_primary": "GROK",
-                "provider_secondary": "PERPLEXITY",
-                "provider_fallbacks": ["GEMINI", "OPENAI"],
-                "confidence": 0.75,
-                "multi_call": True,
-                "reason_codes": pre.get("pre_reason_codes", []),
-            }
+            plan = {"intent": intent_hint, "provider_primary": "GROK", "provider_secondary": "PERPLEXITY",
+                    "provider_fallbacks": ["GEMINI", "OPENAI"], "confidence": 0.75, "multi_call": True,
+                    "reason_codes": pre.get("pre_reason_codes", [])}
         elif intent_hint == "WEB_RESEARCH_CITATIONS":
-            plan = {
-                "intent": intent_hint,
-                "provider_primary": "PERPLEXITY",
-                "provider_secondary": "GEMINI",
-                "provider_fallbacks": ["OPENAI", "CLAUDE"],
-                "confidence": 0.78,
-                "multi_call": True,
-                "reason_codes": pre.get("pre_reason_codes", []),
-            }
+            plan = {"intent": intent_hint, "provider_primary": "PERPLEXITY", "provider_secondary": "GEMINI",
+                    "provider_fallbacks": ["OPENAI", "CLAUDE"], "confidence": 0.78, "multi_call": True,
+                    "reason_codes": pre.get("pre_reason_codes", [])}
         elif intent_hint == "LOCAL_NEAR_ME":
-            plan = {
-                "intent": intent_hint,
-                "provider_primary": "PERPLEXITY",
-                "provider_secondary": "GEMINI" if pre.get("pre_multi_call_hint") else None,
-                "provider_fallbacks": ["OPENAI"],
-                "confidence": 0.72,
-                "multi_call": bool(pre.get("pre_multi_call_hint")),
-                "reason_codes": pre.get("pre_reason_codes", []),
-            }
+            plan = {"intent": intent_hint, "provider_primary": "PERPLEXITY",
+                    "provider_secondary": "GEMINI" if pre.get("pre_multi_call_hint") else None,
+                    "provider_fallbacks": ["OPENAI"], "confidence": 0.72,
+                    "multi_call": bool(pre.get("pre_multi_call_hint")),
+                    "reason_codes": pre.get("pre_reason_codes", [])}
         elif intent_hint == "CODING_TECH":
-            plan = {
-                "intent": intent_hint,
-                "provider_primary": "OPENAI",
-                "provider_secondary": "CLAUDE" if pre.get("pre_multi_call_hint") else None,
-                "provider_fallbacks": [],
-                "confidence": 0.80,
-                "multi_call": bool(pre.get("pre_multi_call_hint")),
-                "reason_codes": pre.get("pre_reason_codes", []),
-            }
+            plan = {"intent": intent_hint, "provider_primary": "OPENAI",
+                    "provider_secondary": "CLAUDE" if pre.get("pre_multi_call_hint") else None,
+                    "provider_fallbacks": [], "confidence": 0.80,
+                    "multi_call": bool(pre.get("pre_multi_call_hint")),
+                    "reason_codes": pre.get("pre_reason_codes", [])}
         else:
             plan = await route_query(query, features)
     else:
@@ -280,19 +282,17 @@ async def run_pipeline(
     confidence = float(plan.get("confidence", 0.5))
     multi_call = bool(plan.get("multi_call", False))
 
-    # Hard rule: multi-call only if explicitly requested
     if not compare:
         multi_call = False
 
     providers_called: List[str] = []
-
     today_utc = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
-    # Normalized conversation payload (Step C)
     messages = _build_messages(
         query=query,
-        conversation=conversation or [],
-        memory=memory or "",
+        intent=intent,
+        conversation=conversation,
+        state=state,
         today_utc=today_utc,
     )
 
@@ -305,8 +305,8 @@ async def run_pipeline(
         "today_utc": today_utc,
         "max_tokens": int(max_tokens),
         "compare": bool(compare),
-        "messages": messages,
-        "memory": memory or "",
+        "messages": messages,   # ✅ Consistent multi-turn input
+        "state": state or {},   # ✅ Deterministic memory/state
     }
 
     # -------- Single call + fallbacks --------
@@ -318,24 +318,19 @@ async def run_pipeline(
         for p in [provider_primary] + fallbacks:
             if not is_provider_available(p):
                 continue
-
             try:
                 providers_called.append(p)
                 answer = await call_provider_logged(db, query_uuid, p, query, intent, meta)
                 provider_used = p
                 break
-
             except ProviderError as e:
                 errors.append(f"{p}:{type(e).__name__}:{str(e)[:160]}")
                 if _is_rate_limit_error(e):
                     cooldown_provider(p, minutes=10)
-                continue
-
             except Exception as e:
                 errors.append(f"{p}:{type(e).__name__}:{str(e)[:160]}")
                 if _is_rate_limit_error(e):
                     cooldown_provider(p, minutes=10)
-                continue
 
         if answer is None:
             answer = "Sorry — providers are not configured or are temporarily unavailable."
@@ -379,7 +374,7 @@ async def run_pipeline(
 
     ans_a = ""
     ans_b = ""
-    errors: List[str] = []
+    errors = []
 
     pool = [a_provider, b_provider] + [p for p in fallbacks if p not in [a_provider, b_provider]]
     chosen: List[str] = []
@@ -388,7 +383,6 @@ async def run_pipeline(
             chosen.append(p)
         if len(chosen) == 2:
             break
-
     if len(chosen) == 1:
         chosen.append(b_provider)
 
@@ -451,26 +445,6 @@ async def run_pipeline(
 
     fallback_answer = ans_a or ans_b or "Sorry — providers are not configured or are temporarily unavailable."
     provider_used = a_provider if ans_a else b_provider if ans_b else "NONE"
-
-    latency_total_ms = int((time.perf_counter() - t0) * 1000)
-
-    if db:
-        try:
-            dbrepo.update_query_result(
-                db,
-                query_id=query_uuid,
-                router_intent=intent,
-                router_confidence=confidence,
-                multi_call=multi_call,
-                providers_called_json=providers_called,
-                provider_used_final=provider_used,
-                latency_total_ms=latency_total_ms,
-                token_cost_estimate_usd=None,
-                answered=True,
-                meta_json={"features": features, "router": plan, "errors": errors},
-            )
-        except Exception:
-            _safe_db_rollback(db)
 
     _safe_db_close(db)
 
