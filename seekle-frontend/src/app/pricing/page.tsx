@@ -1,9 +1,10 @@
+// src/app/pricing/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import UpgradeEmailModal from "@/components/UpgradeEmailModal";
 
-type Plan = "starter";
+type Plan = "starter" | "plus" | "power";
 
 function getSessionId(): string | null {
   if (typeof window === "undefined") return null;
@@ -17,6 +18,7 @@ async function ensureLoggedForBilling(session_id: string, email: string) {
     cache: "no-store",
     body: JSON.stringify({ session_id, email }),
   });
+
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail || "Could not start billing");
   return data;
@@ -24,9 +26,7 @@ async function ensureLoggedForBilling(session_id: string, email: string) {
 
 async function startCheckout(plan: Plan, session_id: string) {
   const res = await fetch(
-    `/api/billing/checkout?session_id=${encodeURIComponent(
-      session_id
-    )}&plan=${encodeURIComponent(plan)}`,
+    `/api/billing/checkout?session_id=${encodeURIComponent(session_id)}&plan=${encodeURIComponent(plan)}`,
     { method: "POST", cache: "no-store" }
   );
 
@@ -37,146 +37,198 @@ async function startCheckout(plan: Plan, session_id: string) {
     window.location.href = data.url;
     return;
   }
-
-  throw new Error("Checkout not configured yet");
+  throw new Error("Checkout not configured yet (missing url).");
 }
 
 export default function PricingPage() {
-  const [loading, setLoading] = useState(false);
+  const [loadingPlan, setLoadingPlan] = useState<Plan | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [needEmail, setNeedEmail] = useState(false);
+  const [pendingPlan, setPendingPlan] = useState<Plan | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
-  useEffect(() => {
-    setSessionId(getSessionId());
-  }, []);
+  useEffect(() => setSessionId(getSessionId()), []);
 
-  async function onChooseStarter() {
+  async function onChoose(plan: Plan) {
     setError(null);
-    if (!sessionId) {
-      setError("Session not ready. Please refresh.");
+
+    const sid = sessionId || getSessionId();
+    if (!sid) {
+      setError("Session not ready. Refresh and try again.");
       return;
     }
+
+    setPendingPlan(plan);
     setNeedEmail(true);
   }
 
   async function onEmailContinue(email: string) {
-    if (!sessionId) return;
+    const sid = sessionId || getSessionId();
+    if (!sid || !pendingPlan) return;
 
     setNeedEmail(false);
-    setLoading(true);
+    setLoadingPlan(pendingPlan);
     setError(null);
 
     try {
-      await ensureLoggedForBilling(sessionId, email);
-      await startCheckout("starter", sessionId);
+      await ensureLoggedForBilling(sid, email);
+      await startCheckout(pendingPlan, sid);
     } catch (e: any) {
       setError(e?.message || "Something went wrong");
     } finally {
-      setLoading(false);
+      setLoadingPlan(null);
+      setPendingPlan(null);
     }
   }
 
   return (
-    <main className="min-h-screen bg-zinc-50 text-zinc-900 p-6">
-      <div className="mx-auto w-full max-w-4xl">
-        <div className="flex items-center justify-between mb-8">
+    <main className="min-h-screen bg-seekle-cream text-seekle-text p-6">
+      <div className="mx-auto w-full max-w-5xl">
+        <div className="flex items-center justify-between mb-10">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">Upgrade</h1>
-            <p className="mt-2 text-sm text-zinc-600">
-              Simple pricing. More features coming soon.
+            <p className="mt-2 text-sm text-seekle-subtext">
+              Keep it simple: Starter is live. Plus and Power are coming soon.
             </p>
           </div>
 
           <a
             href="/"
-            className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+            className="rounded-full border border-seekle-border bg-white px-4 py-2 text-sm text-seekle-subtext hover:bg-seekle-muted"
           >
             Back
           </a>
         </div>
 
-        {error && (
-          <div className="mb-6 rounded-xl border border-red-200 bg-white p-4 text-sm text-red-600">
+        {error ? (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-white p-4 text-sm text-red-700 whitespace-pre-wrap shadow-soft">
             {error}
           </div>
-        )}
+        ) : null}
 
-        <div className="grid gap-4 md:grid-cols-3">
-          {/* Starter */}
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-            <div className="text-sm text-zinc-500">Starter</div>
-            <div className="mt-2 text-3xl font-semibold">£6 / month</div>
-            <div className="mt-2 text-sm text-zinc-600">
-              Ad-free Seekle with higher daily usage.
+        {/* Launch offer header */}
+        <div className="mb-6 rounded-2xl border border-seekle-border bg-white p-5 shadow-soft">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-sm text-seekle-subtext">Launch offer</div>
+              <div className="mt-1 text-base">
+                Starter is discounted for early users.
+                <span className="ml-2 inline-flex items-center rounded-full bg-seekle-muted px-3 py-1 text-xs text-seekle-subtext">
+                  Limited time
+                </span>
+              </div>
             </div>
-
-            <ul className="mt-5 space-y-2 text-sm text-zinc-700">
-              <li>• No ads</li>
-              <li>• Higher daily query limits</li>
-              <li>• Saved conversations</li>
-              <li>• Full access to all current tools</li>
-            </ul>
-
-            <button
-              type="button"
-              onClick={onChooseStarter}
-              disabled={loading}
-              className="mt-6 w-full rounded-full px-5 py-3 border bg-black text-white disabled:opacity-50"
-            >
-              {loading ? "Loading…" : "Upgrade to Starter"}
-            </button>
-          </div>
-
-          {/* Plus – Coming Soon */}
-          <div className="rounded-2xl border border-zinc-200 bg-zinc-100 p-6 opacity-60">
-            <div className="text-sm text-zinc-500">Plus</div>
-            <div className="mt-2 text-2xl font-semibold">Coming soon</div>
-            <div className="mt-2 text-sm text-zinc-600">
-              Ecosystem features and deeper integrations.
-            </div>
-
-            <ul className="mt-5 space-y-2 text-sm text-zinc-700">
-              <li>• Tool comparisons</li>
-              <li>• Extended context</li>
-              <li>• Integrations (Slack, HubSpot)</li>
-            </ul>
-
-            <div className="mt-6 w-full rounded-full px-5 py-3 border text-center text-sm text-zinc-500 bg-zinc-200">
-              Coming soon
-            </div>
-          </div>
-
-          {/* Power – Coming Soon */}
-          <div className="rounded-2xl border border-zinc-200 bg-zinc-100 p-6 opacity-60">
-            <div className="text-sm text-zinc-500">Power</div>
-            <div className="mt-2 text-2xl font-semibold">Coming soon</div>
-            <div className="mt-2 text-sm text-zinc-600">
-              Advanced workflows and team features.
-            </div>
-
-            <ul className="mt-5 space-y-2 text-sm text-zinc-700">
-              <li>• .chat & ChatterScript exports</li>
-              <li>• Snapshots & audit logs</li>
-              <li>• Team collaboration</li>
-            </ul>
-
-            <div className="mt-6 w-full rounded-full px-5 py-3 border text-center text-sm text-zinc-500 bg-zinc-200">
-              Coming soon
+            <div className="text-sm text-seekle-subtext">
+              Previous price: <span className="line-through">£16/mo</span> &nbsp;→&nbsp;{" "}
+              <span className="font-semibold text-seekle-text">£6/mo</span>
             </div>
           </div>
         </div>
 
-        <div className="mt-8 text-xs text-zinc-500">
-          Payments are processed securely by Stripe.
+        <div className="grid gap-4 md:grid-cols-3">
+          {/* Starter (LIVE) */}
+          <div className="rounded-3xl border border-seekle-border bg-white p-7 shadow-soft">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-seekle-subtext">Starter</div>
+              <span className="rounded-full bg-seekle-muted px-3 py-1 text-xs text-seekle-subtext">
+                Live
+              </span>
+            </div>
+
+            <div className="mt-3 flex items-end gap-2">
+              <div className="text-4xl font-semibold tracking-tight">£6</div>
+              <div className="pb-1 text-sm text-seekle-subtext">/ month</div>
+            </div>
+
+            <div className="mt-3 text-sm text-seekle-subtext">
+              Ad-free. More daily questions. Built for everyday use.
+            </div>
+
+            <ul className="mt-6 space-y-2 text-sm text-seekle-text">
+              <li>• Ad-free experience</li>
+              <li>• Higher daily limits</li>
+              <li>• Saved conversation (basic)</li>
+              <li>• Same providers as everyone</li>
+            </ul>
+
+            <button
+              type="button"
+              onClick={() => void onChoose("starter")}
+              disabled={!!loadingPlan}
+              className="mt-7 w-full rounded-full px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50"
+            >
+              {loadingPlan === "starter" ? "Loading…" : "Choose Starter"}
+            </button>
+
+            <div className="mt-3 text-xs text-seekle-subtext">
+              Secure payment via Stripe.
+            </div>
+          </div>
+
+          {/* Plus (COMING SOON) */}
+          <div className="rounded-3xl border border-seekle-border bg-white/70 p-7 opacity-70">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-seekle-subtext">Plus</div>
+              <span className="rounded-full bg-seekle-muted px-3 py-1 text-xs text-seekle-subtext">
+                Coming soon
+              </span>
+            </div>
+
+            <div className="mt-3 text-3xl font-semibold tracking-tight">—</div>
+            <div className="mt-3 text-sm text-seekle-subtext">
+              More ecosystem features as Seekle expands.
+            </div>
+
+            <ul className="mt-6 space-y-2 text-sm text-seekle-text">
+              <li>• Deeper conversation history</li>
+              <li>• Export/import tools (Phase 2)</li>
+              <li>• Integrations (Slack/HubSpot)</li>
+            </ul>
+
+            <div className="mt-7 w-full rounded-full px-5 py-3 border border-seekle-border bg-white text-seekle-subtext text-center cursor-not-allowed">
+              Not available yet
+            </div>
+          </div>
+
+          {/* Power (COMING SOON) */}
+          <div className="rounded-3xl border border-seekle-border bg-white/70 p-7 opacity-70">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-seekle-subtext">Power</div>
+              <span className="rounded-full bg-seekle-muted px-3 py-1 text-xs text-seekle-subtext">
+                Coming soon
+              </span>
+            </div>
+
+            <div className="mt-3 text-3xl font-semibold tracking-tight">—</div>
+            <div className="mt-3 text-sm text-seekle-subtext">
+              Advanced workflows for builders.
+            </div>
+
+            <ul className="mt-6 space-y-2 text-sm text-seekle-text">
+              <li>• .chat exports + snapshots</li>
+              <li>• Build mode (files/patches)</li>
+              <li>• Voice + add-ons later</li>
+            </ul>
+
+            <div className="mt-7 w-full rounded-full px-5 py-3 border border-seekle-border bg-white text-seekle-subtext text-center cursor-not-allowed">
+              Not available yet
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-10 text-xs text-seekle-subtext">
+          Starter is the only paid plan right now. Plus/Power will launch once the ecosystem features are live.
         </div>
       </div>
 
       <UpgradeEmailModal
         open={needEmail}
-        onClose={() => setNeedEmail(false)}
-        onSuccess={onEmailContinue}
+        onClose={() => {
+          setNeedEmail(false);
+          setPendingPlan(null);
+        }}
+        onSuccess={(email: string) => void onEmailContinue(email)}
       />
     </main>
   );

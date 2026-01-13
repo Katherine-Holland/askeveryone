@@ -2,24 +2,46 @@
 
 :root {
   color-scheme: light;
+
+  /* Base theme */
+  --background: #faf7f2; /* seekle.cream */
+  --foreground: #18181b; /* seekle.text */
+
+  /* Brand */
+  --seekle-brown: #6b4f3c;
+  --seekle-brown-hover: #5b3f2f;
+
+  /* UI */
+  --surface: #ffffff;
+  --surface-muted: #f6f1e8;
+  --border: #e4e4e7;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+
+  --color-seekle-brown: var(--seekle-brown);
+  --color-seekle-brown-hover: var(--seekle-brown-hover);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-/*@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-} */
-
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(107, 79, 60, 0.18);
+  border-radius: 12px;
+}
+
+::selection {
+  background: rgba(107, 79, 60, 0.18);
 }
