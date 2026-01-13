@@ -1,11 +1,14 @@
 @import "tailwindcss";
 
+/* =========================================================
+   Root theme variables
+   ========================================================= */
 :root {
   color-scheme: light;
 
-  /* Base theme */
-  --background: #faf7f2; /* seekle.cream */
-  --foreground: #18181b; /* seekle.text */
+  /* Base */
+  --background: #faf7f2; /* seekle cream */
+  --foreground: #18181b; /* near-zinc-900 */
 
   /* Brand */
   --seekle-brown: #6f6660;
@@ -17,6 +20,9 @@
   --border: #e4e4e7;
 }
 
+/* =========================================================
+   Tailwind theme bridge
+   ========================================================= */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -28,43 +34,77 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* =========================================================
+   Base document styles
+   ========================================================= */
 body {
   background-color: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
+  font-family: var(--font-geist-sans), system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
+/* Accessible but subtle focus */
 :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(107, 79, 60, 0.18);
+  box-shadow: 0 0 0 4px rgba(111, 102, 96, 0.18);
   border-radius: 12px;
 }
 
+/* Soft selection */
 ::selection {
-  background: rgba(107, 79, 60, 0.18);
+  background: rgba(111, 102, 96, 0.18);
 }
 
-/* --- Seekle subtle "intelligence" animations --- */
+/* =========================================================
+   Seekle "intelligence" animations (silent, tasteful)
+   ========================================================= */
+
 @keyframes seekle-pulse {
-  0% { transform: scale(0.95); opacity: 0.35; }
-  50% { transform: scale(1.05); opacity: 0.75; }
-  100% { transform: scale(0.95); opacity: 0.35; }
+  0% {
+    transform: scale(0.95);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.75;
+  }
+  100% {
+    transform: scale(0.95);
+    opacity: 0.35;
+  }
 }
 
 @keyframes seekle-sheen {
-  0% { opacity: 0.0; transform: translateX(-10%); }
-  25% { opacity: 0.25; }
-  50% { opacity: 0.10; transform: translateX(10%); }
-  100% { opacity: 0.0; transform: translateX(20%); }
+  0% {
+    opacity: 0;
+    transform: translateX(-20%);
+  }
+  30% {
+    opacity: 0.18;
+  }
+  60% {
+    opacity: 0.08;
+    transform: translateX(20%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(40%);
+  }
 }
 
-/* Wrapper that gives the input a soft glow when focused or loading */
+/* =========================================================
+   Search input glow system
+   ========================================================= */
+
+/* wrapper */
 .seekle-input-wrap {
   position: relative;
+  border-radius: 9999px;
 }
 
+/* soft taupe halo */
 .seekle-input-glow {
   position: absolute;
   inset: -10px;
@@ -72,23 +112,23 @@ body {
   pointer-events: none;
   opacity: 0;
   transition: opacity 220ms ease;
-  /* taupe-ish halo */
   background: radial-gradient(
     closest-side,
-    rgba(124, 95, 76, 0.22),
-    rgba(124, 95, 76, 0.10),
-    rgba(124, 95, 76, 0.0)
+    rgba(111, 102, 96, 0.22),
+    rgba(111, 102, 96, 0.10),
+    rgba(111, 102, 96, 0.0)
   );
   filter: blur(8px);
 }
 
-/* enable glow on focus-within OR when you add data-loading="true" */
+/* glow on focus OR loading */
 .seekle-input-wrap:focus-within .seekle-input-glow,
-.seekle-input-wrap[data-loading="true"] .seekle-input-glow {
+.seekle-input-wrap.is-loading .seekle-input-glow {
   opacity: 1;
+  animation: seekle-pulse 1.25s ease-in-out infinite;
 }
 
-/* optional: faint moving sheen when loading */
+/* optional sheen (very subtle) */
 .seekle-input-sheen {
   position: absolute;
   inset: -2px;
@@ -98,7 +138,7 @@ body {
   overflow: hidden;
 }
 
-.seekle-input-wrap[data-loading="true"] .seekle-input-sheen {
+.seekle-input-wrap.is-loading .seekle-input-sheen {
   opacity: 1;
 }
 
@@ -108,21 +148,30 @@ body {
   inset: 0;
   background: linear-gradient(
     90deg,
-    rgba(124, 95, 76, 0.0),
-    rgba(124, 95, 76, 0.18),
-    rgba(124, 95, 76, 0.0)
+    rgba(111, 102, 96, 0),
+    rgba(111, 102, 96, 0.18),
+    rgba(111, 102, 96, 0)
   );
-  animation: seekle-sheen 1.2s ease-in-out infinite;
+  animation: seekle-sheen 1.4s ease-in-out infinite;
 }
 
-/* the little listening/thinking dot */
-.seekle-listening-dot {
-  width: 10px;
-  height: 10px;
+/* =========================================================
+   Tiny listening indicator (inside input)
+   ========================================================= */
+
+.seekle-bar-dot {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 9px;
+  height: 9px;
   border-radius: 9999px;
-  background: rgba(124, 95, 76, 0.9);
+  background: rgba(111, 102, 96, 0.95);
   box-shadow:
-    0 0 0 6px rgba(124, 95, 76, 0.12),
-    0 0 0 14px rgba(124, 95, 76, 0.06);
+    0 0 0 6px rgba(111, 102, 96, 0.12),
+    0 0 0 14px rgba(111, 102, 96, 0.06);
   animation: seekle-pulse 1.05s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 20;
 }
