@@ -84,7 +84,6 @@ export default function Home() {
     setSessionId(newId);
 
     // Hard reload so the user *definitely* sees logout take effect
-    // (and wipes any sticky UI state from providers/auth)
     window.location.assign("/");
   }
 
@@ -95,7 +94,7 @@ export default function Home() {
   const canShowDebug = process.env.NODE_ENV === "development";
 
   return (
-    <main className="min-h-screen bg-zinc-50 text-zinc-900">
+    <main className="min-h-screen bg-seekle-cream text-seekle-text">
       {/* Fixed top-right account menu (does NOT affect centered layout) */}
       <div className="fixed top-6 right-6 z-50">
         {mounted ? (
@@ -121,7 +120,7 @@ export default function Home() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Ask or type..."
-              className="flex-1 rounded-full border border-zinc-200 bg-white px-5 py-3 text-base outline-none focus:ring-2 focus:ring-black/10"
+              className="flex-1 rounded-full border border-seekle-border bg-white px-5 py-3 text-base outline-none focus:ring-2 focus:ring-black/10"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -134,7 +133,7 @@ export default function Home() {
               type="button"
               onClick={() => void runAsk()}
               disabled={loading || !query.trim() || !sessionId}
-              className="rounded-full px-5 py-3 border bg-black text-white disabled:opacity-50"
+              className="rounded-full px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50"
             >
               {loading ? "Asking…" : "Search"}
             </button>
@@ -148,7 +147,7 @@ export default function Home() {
             ) : null}
 
             {resp ? (
-              <div className="rounded-xl border border-zinc-200 bg-white p-5">
+              <div className="rounded-xl border border-seekle-border bg-white p-5">
                 <div className="text-xs text-zinc-500 mb-2">
                   Provider: {resp.provider_used} · Intent: {resp.intent}
                 </div>
@@ -163,14 +162,18 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => setDebug((v) => !v)}
-                className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-zinc-500 hover:text-zinc-700"
+                className="rounded-full border border-seekle-border bg-white px-3 py-1 text-zinc-500 hover:text-zinc-700"
               >
                 {debug ? "Hide debug" : "Show debug"}
               </button>
             </div>
           ) : null}
 
-          <LoginModal open={loginOpen} onClose={() => setLoginOpen(false)} sessionId={sessionId} />
+          <LoginModal
+            open={loginOpen}
+            onClose={() => setLoginOpen(false)}
+            sessionId={sessionId}
+          />
         </div>
       </div>
     </main>
