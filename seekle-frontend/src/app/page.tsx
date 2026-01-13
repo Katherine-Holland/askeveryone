@@ -74,16 +74,13 @@ export default function Home() {
   }
 
   function onLogout() {
-    // Clear UI state immediately
     setResp(null);
     setError(null);
     setQuery("");
 
-    // Reset session id
     const newId = resetSessionId();
     setSessionId(newId);
 
-    // Hard reload so the user *definitely* sees logout take effect
     window.location.assign("/");
   }
 
@@ -115,27 +112,38 @@ export default function Home() {
             <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
           </div>
 
+          {/* Search row */}
           <div className="flex gap-2 items-center">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Ask or type..."
-              className="flex-1 rounded-full border border-seekle-border bg-white px-5 py-3 text-base outline-none focus:ring-2 focus:ring-black/10"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void runAsk();
-                }
-              }}
-            />
+            {/* Glow + sheen wrapper (uses globals.css classes you added) */}
+            <div
+              className="seekle-input-wrap flex-1"
+              data-loading={loading ? "true" : "false"}
+            >
+              <div className="seekle-input-glow" />
+              <div className="seekle-input-sheen" />
+
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Ask or type..."
+                className="relative z-10 w-full rounded-full border border-seekle-border bg-white px-5 py-3 text-base outline-none focus:ring-2 focus:ring-black/10"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void runAsk();
+                  }
+                }}
+              />
+            </div>
 
             <button
               type="button"
               onClick={() => void runAsk()}
               disabled={loading || !query.trim() || !sessionId}
-              className="rounded-full px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50"
+              className="rounded-full px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50 flex items-center gap-3"
             >
-              {loading ? "Asking…" : "Search"}
+              {loading ? <span className="seekle-listening-dot" /> : null}
+              {loading ? "Thinking…" : "Search"}
             </button>
           </div>
 
