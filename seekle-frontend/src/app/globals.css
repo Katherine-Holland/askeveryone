@@ -75,7 +75,7 @@ body {
 }
 
 @keyframes seekle-sheen {
-  0% { opacity: 0.0; transform: translateX(-12%); }
+  10% { opacity: 0.0; transform: translateX(-12%); }
   30% { opacity: 0.24; }
   60% { opacity: 0.10; transform: translateX(10%); }
   100% { opacity: 0.0; transform: translateX(20%); }

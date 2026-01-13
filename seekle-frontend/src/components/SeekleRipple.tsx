@@ -7,7 +7,7 @@ type Mode = "listening" | "thinking" | "answered";
 export default function SeekleRipple({
   mode = "listening",
   size = 140, // ⬅️ bigger
-  color = "rgba(124, 95, 76, 0.35)", // ⬅️ slightly softer taupe
+  color = "rgba(124, 95, 76, 0.8)", // ⬅️ slightly softer taupe
 }: {
   mode?: Mode;
   size?: number;
