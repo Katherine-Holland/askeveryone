@@ -154,7 +154,7 @@ export default function Home() {
           </div>
 
           {/* ✅ Ripple (no inner dot), always present */}
-          <SeekleRipple mode={rippleMode} size={92} />
+          <SeekleRipple mode={rippleMode} size={150} />
 
           <div className="mt-8 space-y-3">
             {error ? (

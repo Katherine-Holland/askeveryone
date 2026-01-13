@@ -6,42 +6,40 @@ type Mode = "listening" | "thinking" | "answered";
 
 export default function SeekleRipple({
   mode = "listening",
-  size = 110,
-  color = "rgba(124, 95, 76, 0.85)", // taupe
+  size = 140, // ⬅️ bigger
+  color = "rgba(124, 95, 76, 0.8)", // ⬅️ slightly softer taupe
 }: {
   mode?: Mode;
   size?: number;
   color?: string;
 }) {
-  // Flow like water: no abrupt jumps — just gentle speed/opacity changes.
   const dur =
-    mode === "thinking" ? "1.25s" : mode === "answered" ? "2.6s" : "2.05s";
+    mode === "thinking" ? "1.4s" : mode === "answered" ? "2.8s" : "2.3s";
 
+  // Softer centre — start rings further out + lower opacity
   const ringOpacityFrom =
-    mode === "thinking" ? 0.40 : mode === "answered" ? 0.18 : 0.26;
+    mode === "thinking" ? 0.28 : mode === "answered" ? 0.14 : 0.18;
 
-  const ringOpacityTo =
-    mode === "thinking" ? 0.0 : mode === "answered" ? 0.0 : 0.0;
+  const ringOpacityTo = 0;
 
-  // Keep radii proportional to the viewBox (0..40)
-  const rFrom = mode === "thinking" ? 7.6 : mode === "answered" ? 8.6 : 8.2;
-  const rTo = mode === "thinking" ? 19.6 : mode === "answered" ? 19.0 : 19.2;
+  // ⬅️ larger starting radius = less dense middle
+  const rFrom = mode === "thinking" ? 9.5 : mode === "answered" ? 10.5 : 10;
+  const rTo = mode === "thinking" ? 22 : mode === "answered" ? 21.5 : 21.8;
 
-  // Stroke width can soften the feel
-  const strokeWidth = mode === "thinking" ? 1.8 : 1.6;
+  // ⬅️ thinner stroke for elegance
+  const strokeWidth = 1.4;
 
-  // Overall wrapper opacity:
-  const wrapperOpacity = mode === "answered" ? 0.55 : 1;
+  const wrapperOpacity = mode === "answered" ? 0.6 : 1;
 
   return (
     <div
       aria-hidden="true"
-      className="mx-auto mt-4 mb-1"
+      className="mx-auto mt-6 mb-2"
       style={{
         width: size,
         height: size,
         opacity: wrapperOpacity,
-        transition: "opacity 650ms cubic-bezier(0.16, 1, 0.3, 1)",
+        transition: "opacity 700ms cubic-bezier(0.16, 1, 0.3, 1)",
         pointerEvents: "none",
       }}
     >
@@ -52,7 +50,7 @@ export default function SeekleRipple({
         xmlns="http://www.w3.org/2000/svg"
         style={{ display: "block" }}
       >
-        {/* Ring A */}
+        {/* Ripple A */}
         <circle
           cx="20"
           cy="20"
@@ -80,7 +78,7 @@ export default function SeekleRipple({
           />
         </circle>
 
-        {/* Ring B (delayed) */}
+        {/* Ripple B (offset) */}
         <circle
           cx="20"
           cy="20"
