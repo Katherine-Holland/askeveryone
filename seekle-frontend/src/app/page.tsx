@@ -60,7 +60,7 @@ export default function Home() {
     try {
       const out = await askBackend({ query: q, session_id: sessionId });
       setResp(out);
-      setQuery(""); // ✅ clear input after send
+      setQuery("");
     } catch (err: any) {
       if (isPaywallError(err)) {
         setLoginOpen(true);
@@ -92,7 +92,6 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-seekle-cream text-seekle-text">
-      {/* Fixed top-right account menu (does NOT affect centered layout) */}
       <div className="fixed top-6 right-6 z-50">
         {mounted ? (
           <AccountMenu
@@ -104,7 +103,6 @@ export default function Home() {
         ) : null}
       </div>
 
-      {/* Centered content */}
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-2xl">
           <div className="text-center mb-8">
@@ -112,12 +110,10 @@ export default function Home() {
             <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
           </div>
 
-          {/* Search row */}
           <div className="flex gap-2 items-center">
-            {/* Glow + sheen wrapper (uses globals.css classes you added) */}
+            {/* Always-present glow wrapper, pulses harder only while loading */}
             <div
-              className="seekle-input-wrap flex-1"
-              data-loading={loading ? "true" : "false"}
+              className={`seekle-input-wrap flex-1 ${loading ? "is-loading" : ""}`}
             >
               <div className="seekle-input-glow" />
               <div className="seekle-input-sheen" />
@@ -134,16 +130,20 @@ export default function Home() {
                   }
                 }}
               />
+
+              {/* Subtle taupe “listening” dot inside the bar (only while loading) */}
+              {loading ? <span className="seekle-bar-dot" aria-hidden /> : null}
             </div>
 
             <button
               type="button"
               onClick={() => void runAsk()}
               disabled={loading || !query.trim() || !sessionId}
-              className="rounded-full px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50 flex items-center gap-3"
+              aria-label="Search"
+              className="rounded-full px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50"
             >
-              {loading ? <span className="seekle-listening-dot" /> : null}
-              {loading ? "Thinking…" : "Search"}
+              {/* No “Thinking…” text */}
+              Search
             </button>
           </div>
 
@@ -164,7 +164,6 @@ export default function Home() {
             ) : null}
           </div>
 
-          {/* Dev-only debug toggle (optional) */}
           {mounted && canShowDebug ? (
             <div className="mt-8 flex items-center justify-center gap-3 text-xs text-zinc-400">
               <button
@@ -177,11 +176,7 @@ export default function Home() {
             </div>
           ) : null}
 
-          <LoginModal
-            open={loginOpen}
-            onClose={() => setLoginOpen(false)}
-            sessionId={sessionId}
-          />
+          <LoginModal open={loginOpen} onClose={() => setLoginOpen(false)} sessionId={sessionId} />
         </div>
       </div>
     </main>
