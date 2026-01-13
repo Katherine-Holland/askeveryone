@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import UpgradeEmailModal from "@/components/UpgradeEmailModal";
 
-type Plan = "starter" | "pro" | "business";
+type Plan = "starter";
 
 function getSessionId(): string | null {
   if (typeof window === "undefined") return null;
@@ -23,63 +23,58 @@ async function ensureLoggedForBilling(session_id: string, email: string) {
 }
 
 async function startCheckout(plan: Plan, session_id: string) {
-  const res = await fetch(`/api/billing/checkout?session_id=${encodeURIComponent(session_id)}&plan=${encodeURIComponent(plan)}`, {
-    method: "POST",
-    cache: "no-store",
-  });
+  const res = await fetch(
+    `/api/billing/checkout?session_id=${encodeURIComponent(
+      session_id
+    )}&plan=${encodeURIComponent(plan)}`,
+    { method: "POST", cache: "no-store" }
+  );
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail || "Checkout failed");
 
-  if (data?.url) window.location.href = data.url;
-  throw new Error("Checkout not configured yet (missing url).");
+  if (data?.url) {
+    window.location.href = data.url;
+    return;
+  }
+
+  throw new Error("Checkout not configured yet");
 }
 
 export default function PricingPage() {
-  const [loadingPlan, setLoadingPlan] = useState<Plan | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [needEmail, setNeedEmail] = useState(false);
-  const [pendingPlan, setPendingPlan] = useState<Plan | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     setSessionId(getSessionId());
   }, []);
 
-  async function onChoose(plan: Plan) {
+  async function onChooseStarter() {
     setError(null);
-    const sid = sessionId || getSessionId();
-    if (!sid) {
-      setError("Session not ready. Refresh and try again.");
+    if (!sessionId) {
+      setError("Session not ready. Please refresh.");
       return;
     }
-
-    // We *don’t* force login first anymore.
-    // We’ll prompt email and attach session -> user server-side.
-    setPendingPlan(plan);
     setNeedEmail(true);
   }
 
   async function onEmailContinue(email: string) {
-    const sid = sessionId || getSessionId();
-    if (!sid || !pendingPlan) return;
+    if (!sessionId) return;
 
     setNeedEmail(false);
-    setLoadingPlan(pendingPlan);
+    setLoading(true);
     setError(null);
 
     try {
-      // Attach user to this session_id (upgrade-first)
-      await ensureLoggedForBilling(sid, email);
-
-      // Now run checkout
-      await startCheckout(pendingPlan, sid);
+      await ensureLoggedForBilling(sessionId, email);
+      await startCheckout("starter", sessionId);
     } catch (e: any) {
       setError(e?.message || "Something went wrong");
     } finally {
-      setLoadingPlan(null);
-      setPendingPlan(null);
+      setLoading(false);
     }
   }
 
@@ -90,7 +85,7 @@ export default function PricingPage() {
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">Upgrade</h1>
             <p className="mt-2 text-sm text-zinc-600">
-              Pick a plan. You can change or cancel later.
+              Simple pricing. More features coming soon.
             </p>
           </div>
 
@@ -102,84 +97,74 @@ export default function PricingPage() {
           </a>
         </div>
 
-        {error ? (
-          <div className="mb-6 rounded-xl border border-red-200 bg-white p-4 text-sm text-red-600 whitespace-pre-wrap">
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-white p-4 text-sm text-red-600">
             {error}
           </div>
-        ) : null}
+        )}
 
         <div className="grid gap-4 md:grid-cols-3">
           {/* Starter */}
           <div className="rounded-2xl border border-zinc-200 bg-white p-6">
             <div className="text-sm text-zinc-500">Starter</div>
-            <div className="mt-2 text-3xl font-semibold">Free</div>
+            <div className="mt-2 text-3xl font-semibold">£6 / month</div>
             <div className="mt-2 text-sm text-zinc-600">
-              Basic access for trying Seekle.
+              Ad-free Seekle with higher daily usage.
             </div>
 
             <ul className="mt-5 space-y-2 text-sm text-zinc-700">
-              <li>• Limited daily searches</li>
-              <li>• Saved conversation (basic)</li>
-              <li>• Standard speed</li>
+              <li>• No ads</li>
+              <li>• Higher daily query limits</li>
+              <li>• Saved conversations</li>
+              <li>• Full access to all current tools</li>
             </ul>
 
             <button
               type="button"
-              disabled
-              className="mt-6 w-full rounded-full px-5 py-3 border bg-zinc-100 text-zinc-400 cursor-not-allowed"
+              onClick={onChooseStarter}
+              disabled={loading}
+              className="mt-6 w-full rounded-full px-5 py-3 border bg-black text-white disabled:opacity-50"
             >
-              Current plan
+              {loading ? "Loading…" : "Upgrade to Starter"}
             </button>
           </div>
 
-          {/* Pro */}
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <div className="text-sm text-zinc-500">Pro</div>
-            <div className="mt-2 text-3xl font-semibold">£19/mo</div>
+          {/* Plus – Coming Soon */}
+          <div className="rounded-2xl border border-zinc-200 bg-zinc-100 p-6 opacity-60">
+            <div className="text-sm text-zinc-500">Plus</div>
+            <div className="mt-2 text-2xl font-semibold">Coming soon</div>
             <div className="mt-2 text-sm text-zinc-600">
-              For regular use and power searching.
+              Ecosystem features and deeper integrations.
             </div>
 
             <ul className="mt-5 space-y-2 text-sm text-zinc-700">
-              <li>• Higher daily limits</li>
-              <li>• Conversation history</li>
-              <li>• Faster providers</li>
-              <li>• Priority routing</li>
+              <li>• Tool comparisons</li>
+              <li>• Extended context</li>
+              <li>• Integrations (Slack, HubSpot)</li>
             </ul>
 
-            <button
-              type="button"
-              onClick={() => void onChoose("pro")}
-              disabled={!!loadingPlan}
-              className="mt-6 w-full rounded-full px-5 py-3 border bg-black text-white disabled:opacity-50"
-            >
-              {loadingPlan === "pro" ? "Loading…" : "Choose Pro"}
-            </button>
+            <div className="mt-6 w-full rounded-full px-5 py-3 border text-center text-sm text-zinc-500 bg-zinc-200">
+              Coming soon
+            </div>
           </div>
 
-          {/* Business */}
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-            <div className="text-sm text-zinc-500">Business</div>
-            <div className="mt-2 text-3xl font-semibold">£49/mo</div>
+          {/* Power – Coming Soon */}
+          <div className="rounded-2xl border border-zinc-200 bg-zinc-100 p-6 opacity-60">
+            <div className="text-sm text-zinc-500">Power</div>
+            <div className="mt-2 text-2xl font-semibold">Coming soon</div>
             <div className="mt-2 text-sm text-zinc-600">
-              Team usage + higher limits.
+              Advanced workflows and team features.
             </div>
 
             <ul className="mt-5 space-y-2 text-sm text-zinc-700">
-              <li>• Highest daily limits</li>
-              <li>• Team-ready usage</li>
-              <li>• Priority support</li>
-              <li>• Best routing + fallbacks</li>
+              <li>• .chat & ChatterScript exports</li>
+              <li>• Snapshots & audit logs</li>
+              <li>• Team collaboration</li>
             </ul>
 
-            <button
-              type="button"
-              onClick={() => void onChoose("business")}
-              disabled={!!loadingPlan}
-              className="mt-6 w-full rounded-full px-5 py-3 border bg-black text-white disabled:opacity-50"
-            >
-              {loadingPlan === "business" ? "Loading…" : "Choose Business"}
-            </button>
+            <div className="mt-6 w-full rounded-full px-5 py-3 border text-center text-sm text-zinc-500 bg-zinc-200">
+              Coming soon
+            </div>
           </div>
         </div>
 
@@ -190,11 +175,8 @@ export default function PricingPage() {
 
       <UpgradeEmailModal
         open={needEmail}
-        onClose={() => {
-          setNeedEmail(false);
-          setPendingPlan(null);
-        }}
-        onSuccess={(email) => void onEmailContinue(email)}
+        onClose={() => setNeedEmail(false)}
+        onSuccess={onEmailContinue}
       />
     </main>
   );
