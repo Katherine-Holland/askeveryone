@@ -14,8 +14,15 @@ from app.db import billing_repo
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
+def _normalize_plan(plan: str) -> str:
+    p = (plan or "").lower().strip()
+    if p in ("starter", "plus", "power"):
+        return p
+    raise HTTPException(status_code=400, detail="Invalid plan. Use starter|plus|power")
+
+
 def _plan_to_price(plan: str) -> str:
-    plan = (plan or "").lower().strip()
+    plan = _normalize_plan(plan)
     if plan == "starter":
         return settings.stripe_price_starter
     if plan == "plus":
@@ -26,10 +33,9 @@ def _plan_to_price(plan: str) -> str:
 
 
 def _safe_frontend_url(path: str) -> str:
-    base = getattr(settings, "frontend_base_url", "") or getattr(settings, "FRONTEND_BASE_URL", "")  # tolerate either
+    base = getattr(settings, "frontend_base_url", "") or getattr(settings, "FRONTEND_BASE_URL", "")
     if not base:
-        # fallback to same origin if you want, but better to set env var
-        base = "https://askeveryone.onrender.com"
+        base = "https://seekle.io"
     return base.rstrip("/") + path
 
 
@@ -53,8 +59,15 @@ async def billing_status(session_id: str):
         billing_repo.ensure_wallet_and_plan(db, user_id)
         bal = billing_repo.get_balance(db, user_id)
         plan = billing_repo.get_user_plan(db, user_id)
+        tier = billing_repo.get_user_tier(db, user_id)
 
-        return {"ok": True, "user_id": str(user_id), "plan": plan, "credits_balance": bal}
+        return {
+            "ok": True,
+            "user_id": str(user_id),
+            "plan": plan,         # free|paid
+            "tier": tier,         # starter|plus|power|null
+            "credits_balance": bal,
+        }
     finally:
         if db:
             db.close()
@@ -68,6 +81,8 @@ async def create_checkout(session_id: str, plan: str):
     """
     if not settings.stripe_secret_key:
         raise HTTPException(status_code=500, detail="STRIPE_SECRET_KEY not set")
+
+    tier = _normalize_plan(plan)
 
     db = None
     try:
@@ -84,13 +99,12 @@ async def create_checkout(session_id: str, plan: str):
         if not user_id:
             raise HTTPException(status_code=401, detail="Not logged in")
 
-        # Ensure plan + wallet rows exist
         billing_repo.ensure_wallet_and_plan(db, user_id)
 
         import stripe  # type: ignore
         stripe.api_key = settings.stripe_secret_key
 
-        price_id = _plan_to_price(plan)
+        price_id = _plan_to_price(tier)
 
         # Fetch stripe_customer_id from users table if present
         row2 = db.execute(
@@ -114,7 +128,6 @@ async def create_checkout(session_id: str, plan: str):
         success_url = _safe_frontend_url("/billing/success?session_id={CHECKOUT_SESSION_ID}")
         cancel_url = _safe_frontend_url("/billing/cancel")
 
-        # Create Checkout Session (subscription)
         checkout = stripe.checkout.Session.create(
             mode="subscription",
             customer=stripe_customer_id,
@@ -124,7 +137,7 @@ async def create_checkout(session_id: str, plan: str):
             cancel_url=cancel_url,
             metadata={
                 "user_id": str(user_id),
-                "plan": plan.lower().strip(),
+                "tier": tier,
                 "price_id": price_id,
             },
         )
@@ -139,8 +152,8 @@ async def create_checkout(session_id: str, plan: str):
 async def stripe_webhook(request: Request):
     """
     Subscription webhooks:
-    - checkout.session.completed -> capture customer + subscription + price, mark paid
-    - customer.subscription.created/updated/deleted -> keep plan accurate
+    - checkout.session.completed -> record paid + tier
+    - customer.subscription.updated/deleted -> keep plan accurate
     """
     if not settings.stripe_webhook_secret:
         raise HTTPException(status_code=500, detail="STRIPE_WEBHOOK_SECRET not set")
@@ -181,27 +194,20 @@ async def stripe_webhook(request: Request):
         if exists:
             return {"ok": True, "skipped": True}
 
-        # Record event first (truncate raw for debugging)
+        # Record event first
         db.execute(
             text("insert into stripe_events (event_id, type, raw_json) values (:eid, :t, :raw)"),
             {"eid": event_id, "t": event_type, "raw": payload.decode("utf-8")[:5000]},
         )
         db.commit()
 
-        # -----------------------------
-        # Helper: set plan state in DB
-        # -----------------------------
-        def set_user_plan(user_id: uuid.UUID, plan_value: str) -> None:
-            # You currently store only free/paid in user_plans.
-            # If you want per-tier, we can add a tier column later.
-            db.execute(
-                text(
-                    "insert into user_plans (user_id, plan) values (:uid, :p) "
-                    "on conflict (user_id) do update set plan=:p, updated_at=now()"
-                ),
-                {"uid": user_id, "p": plan_value},
-            )
-            db.commit()
+        # Helper: find user by stripe customer
+        def _user_id_from_customer(customer_id: str) -> Optional[uuid.UUID]:
+            row = db.execute(
+                text("select user_id from users where stripe_customer_id=:cid"),
+                {"cid": customer_id},
+            ).fetchone()
+            return row[0] if row and row[0] else None
 
         # -----------------------------
         # checkout.session.completed
@@ -211,11 +217,11 @@ async def stripe_webhook(request: Request):
             md = session.get("metadata") or {}
 
             user_id_str = md.get("user_id")
-            plan = (md.get("plan") or "").lower().strip()
-            price_id = md.get("price_id")
+            tier = (md.get("tier") or "").lower().strip() or None
 
             if not user_id_str:
                 return {"ok": True, "ignored": "missing_user_id"}
+
             try:
                 user_id = uuid.UUID(user_id_str)
             except Exception:
@@ -231,43 +237,47 @@ async def stripe_webhook(request: Request):
                 db.commit()
 
             # Mark paid if subscription exists
-            # Checkout session contains subscription id in subscription mode
             sub_id = session.get("subscription")
             if sub_id:
-                set_user_plan(user_id, "paid")
-                return {"ok": True, "event": event_type, "user_id": str(user_id), "plan": "paid", "tier": plan, "sub": sub_id}
+                billing_repo.set_user_plan_and_tier(db, user_id, "paid", tier)
+                return {
+                    "ok": True,
+                    "event": event_type,
+                    "user_id": str(user_id),
+                    "plan": "paid",
+                    "tier": tier,
+                    "sub": sub_id,
+                }
 
-            # If it wasn't subscription mode, you can still support credit packs later:
             return {"ok": True, "event": event_type, "note": "no subscription on session"}
 
         # -----------------------------
-        # Subscription lifecycle events
+        # subscription.updated / deleted
         # -----------------------------
         if event_type in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
             sub = event["data"]["object"]
             customer_id = sub.get("customer")
             status = (sub.get("status") or "").lower()
 
-            # Find our user by stripe_customer_id
             if not customer_id:
                 return {"ok": True, "ignored": "no_customer"}
 
-            row = db.execute(
-                text("select user_id from users where stripe_customer_id=:cid"),
-                {"cid": customer_id},
-            ).fetchone()
-            if not row or not row[0]:
+            user_id = _user_id_from_customer(customer_id)
+            if not user_id:
                 return {"ok": True, "ignored": "unknown_customer"}
 
-            user_id = row[0]
-
-            # Active-like statuses
             is_active = status in ("active", "trialing")
-            set_user_plan(user_id, "paid" if is_active else "free")
 
-            return {"ok": True, "event": event_type, "user_id": str(user_id), "status": status, "plan": ("paid" if is_active else "free")}
+            if is_active:
+                # Keep whatever tier we already have (set by checkout completed).
+                existing_tier = billing_repo.get_user_tier(db, user_id)
+                billing_repo.set_user_plan_and_tier(db, user_id, "paid", existing_tier)
+                return {"ok": True, "event": event_type, "user_id": str(user_id), "status": status, "plan": "paid", "tier": existing_tier}
 
-        # Ignore the rest
+            # Not active -> free + clear tier
+            billing_repo.set_user_plan_and_tier(db, user_id, "free", None)
+            return {"ok": True, "event": event_type, "user_id": str(user_id), "status": status, "plan": "free", "tier": None}
+
         return {"ok": True, "ignored": event_type}
 
     finally:

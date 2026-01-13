@@ -1,5 +1,9 @@
 # app/db/billing_repo.py
+from __future__ import annotations
+
 import uuid
+from typing import Optional
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -14,15 +18,17 @@ def ensure_wallet_and_plan(db: Session, user_id: uuid.UUID) -> None:
         ),
         {"u": user_id},
     )
-    # plan
+
+    # plan (+ tier)
     db.execute(
         text(
-            "insert into user_plans (user_id, plan) "
-            "values (:u, 'free') "
+            "insert into user_plans (user_id, plan, tier) "
+            "values (:u, 'free', null) "
             "on conflict (user_id) do nothing"
         ),
         {"u": user_id},
     )
+
     db.commit()
 
 
@@ -34,6 +40,15 @@ def get_user_plan(db: Session, user_id: uuid.UUID) -> str:
     return str(row[0]) if row and row[0] else "free"
 
 
+def get_user_tier(db: Session, user_id: uuid.UUID) -> Optional[str]:
+    row = db.execute(
+        text("select tier from user_plans where user_id=:u"),
+        {"u": user_id},
+    ).fetchone()
+    tier = row[0] if row else None
+    return str(tier) if tier else None
+
+
 def set_user_plan(db: Session, user_id: uuid.UUID, plan: str) -> None:
     db.execute(
         text(
@@ -41,6 +56,26 @@ def set_user_plan(db: Session, user_id: uuid.UUID, plan: str) -> None:
             "on conflict (user_id) do update set plan=excluded.plan, updated_at=now()"
         ),
         {"u": user_id, "p": plan},
+    )
+    db.commit()
+
+
+def set_user_plan_and_tier(db: Session, user_id: uuid.UUID, plan: str, tier: Optional[str]) -> None:
+    db.execute(
+        text(
+            "insert into user_plans (user_id, plan, tier) values (:u, :p, :t) "
+            "on conflict (user_id) do update "
+            "set plan=excluded.plan, tier=excluded.tier, updated_at=now()"
+        ),
+        {"u": user_id, "p": plan, "t": tier},
+    )
+    db.commit()
+
+
+def clear_user_tier(db: Session, user_id: uuid.UUID) -> None:
+    db.execute(
+        text("update user_plans set tier=null, updated_at=now() where user_id=:u"),
+        {"u": user_id},
     )
     db.commit()
 
