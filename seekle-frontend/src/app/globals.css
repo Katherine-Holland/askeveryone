@@ -62,7 +62,7 @@ body {
   transition: opacity 220ms ease;
   background: radial-gradient(
     closest-side,
-    rgba(124, 95, 76, 0.22),
+    rgba(124, 95, 76, 0.077),
     rgba(124, 95, 76, 0.10),
     rgba(124, 95, 76, 0.0)
   );
