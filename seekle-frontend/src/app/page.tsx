@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { askBackend, isPaywallError, type AskResponse } from "@/lib/api";
 import LoginModal from "@/components/LoginModal";
 import AccountMenu from "@/components/AccountMenu";
+import SeekleRipple from "@/components/SeekleRipple";
 
 function getOrCreateSessionId(): string {
   const key = "seekle_session_id";
@@ -44,7 +45,7 @@ export default function Home() {
   // Dev-only debug visibility (off by default)
   const [debug, setDebug] = useState(false);
 
-  // used to re-trigger the thought animation each time a new answer arrives
+  // re-trigger thought animation per answer
   const [thoughtKey, setThoughtKey] = useState(0);
 
   useEffect(() => {
@@ -63,8 +64,8 @@ export default function Home() {
     try {
       const out = await askBackend({ query: q, session_id: sessionId });
       setResp(out);
-      setThoughtKey((k) => k + 1); // ✅ re-run “thought” animation
-      setQuery(""); // ✅ clear input after send
+      setThoughtKey((k) => k + 1);
+      setQuery("");
     } catch (err: any) {
       if (isPaywallError(err)) {
         setLoginOpen(true);
@@ -94,7 +95,7 @@ export default function Home() {
 
   const canShowDebug = process.env.NODE_ENV === "development";
 
-  const signalMode = useMemo(() => {
+  const rippleMode = useMemo(() => {
     if (loading) return "thinking";
     if (resp) return "answered";
     return "listening";
@@ -102,7 +103,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-seekle-cream text-seekle-text">
-      {/* Fixed top-right account menu (does NOT affect centered layout) */}
+      {/* Fixed top-right account menu */}
       <div className="fixed top-6 right-6 z-50">
         {mounted ? (
           <AccountMenu
@@ -122,7 +123,7 @@ export default function Home() {
             <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
           </div>
 
-          {/* Input + button */}
+          {/* Input halo wrapper */}
           <div className="seekle-input-wrap" data-loading={loading ? "true" : "false"}>
             <div className="seekle-input-glow" />
             <div className="seekle-input-sheen" />
@@ -152,12 +153,8 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Seekle Signal (centered ring) */}
-          <div className="seekle-signal" data-mode={signalMode} aria-hidden="true">
-            <div className="seekle-signal-core">
-              <span />
-            </div>
-          </div>
+          {/* ✅ Ripple (no inner dot), always present */}
+          <SeekleRipple mode={rippleMode} size={92} />
 
           <div className="mt-8 space-y-3">
             {error ? (
@@ -179,7 +176,7 @@ export default function Home() {
             ) : null}
           </div>
 
-          {/* Dev-only debug toggle (optional) */}
+          {/* Dev-only debug toggle */}
           {mounted && canShowDebug ? (
             <div className="mt-8 flex items-center justify-center gap-3 text-xs text-zinc-400">
               <button
