@@ -73,10 +73,16 @@ async def billing_status(session_id: str):
             db.close()
 
 
+# Optional: quick browser probe to confirm routing is live
+@router.get("/webhook/stripe")
+async def stripe_webhook_probe():
+    return {"ok": True}
+
+
 @router.post("/checkout")
 async def create_checkout(session_id: str, plan: str):
     """
-    Create a Stripe Checkout Session for subscriptions (Starter/Plus/Power).
+    Create a Stripe Checkout Session (Stripe-hosted page) for subscriptions.
     Returns: { ok: true, url: "https://checkout.stripe.com/..." }
     """
     if not settings.stripe_secret_key:
@@ -90,7 +96,6 @@ async def create_checkout(session_id: str, plan: str):
         if not db:
             raise HTTPException(status_code=500, detail="DB not configured")
 
-        # Resolve user from session (must be logged in)
         row = db.execute(
             text("select user_id from chat_sessions where session_id=:sid"),
             {"sid": session_id},
@@ -106,18 +111,14 @@ async def create_checkout(session_id: str, plan: str):
 
         price_id = _plan_to_price(tier)
 
-        # Fetch stripe_customer_id from users table if present
         row2 = db.execute(
             text("select stripe_customer_id from users where user_id=:uid"),
             {"uid": user_id},
         ).fetchone()
         stripe_customer_id = row2[0] if row2 and row2[0] else None
 
-        # Create customer if missing
         if not stripe_customer_id:
-            cust = stripe.Customer.create(
-                metadata={"user_id": str(user_id)},
-            )
+            cust = stripe.Customer.create(metadata={"user_id": str(user_id)})
             stripe_customer_id = cust["id"]
             db.execute(
                 text("update users set stripe_customer_id=:cid where user_id=:uid"),
@@ -125,7 +126,8 @@ async def create_checkout(session_id: str, plan: str):
             )
             db.commit()
 
-        success_url = _safe_frontend_url("/billing/success?session_id={CHECKOUT_SESSION_ID}")
+        # IMPORTANT: stripe_session_id is a Stripe Checkout Session id (cs_*), not your Seekle session UUID
+        success_url = _safe_frontend_url("/billing/success?stripe_session_id={CHECKOUT_SESSION_ID}")
         cancel_url = _safe_frontend_url("/billing/cancel")
 
         checkout = stripe.checkout.Session.create(
@@ -150,11 +152,6 @@ async def create_checkout(session_id: str, plan: str):
 
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
-    """
-    Subscription webhooks:
-    - checkout.session.completed -> record paid + tier
-    - customer.subscription.updated/deleted -> keep plan accurate
-    """
     if not settings.stripe_webhook_secret:
         raise HTTPException(status_code=500, detail="STRIPE_WEBHOOK_SECRET not set")
     if not settings.stripe_secret_key:
@@ -186,7 +183,6 @@ async def stripe_webhook(request: Request):
         event_id = event.get("id")
         event_type = event.get("type")
 
-        # Idempotency
         exists = db.execute(
             text("select 1 from stripe_events where event_id=:eid"),
             {"eid": event_id},
@@ -194,14 +190,12 @@ async def stripe_webhook(request: Request):
         if exists:
             return {"ok": True, "skipped": True}
 
-        # Record event first
         db.execute(
             text("insert into stripe_events (event_id, type, raw_json) values (:eid, :t, :raw)"),
             {"eid": event_id, "t": event_type, "raw": payload.decode("utf-8")[:5000]},
         )
         db.commit()
 
-        # Helper: find user by stripe customer
         def _user_id_from_customer(customer_id: str) -> Optional[uuid.UUID]:
             row = db.execute(
                 text("select user_id from users where stripe_customer_id=:cid"),
@@ -209,9 +203,6 @@ async def stripe_webhook(request: Request):
             ).fetchone()
             return row[0] if row and row[0] else None
 
-        # -----------------------------
-        # checkout.session.completed
-        # -----------------------------
         if event_type == "checkout.session.completed":
             session = event["data"]["object"]
             md = session.get("metadata") or {}
@@ -227,7 +218,6 @@ async def stripe_webhook(request: Request):
             except Exception:
                 return {"ok": True, "ignored": "bad_user_id"}
 
-            # Store stripe_customer_id if returned
             stripe_customer_id = session.get("customer")
             if stripe_customer_id:
                 db.execute(
@@ -236,24 +226,13 @@ async def stripe_webhook(request: Request):
                 )
                 db.commit()
 
-            # Mark paid if subscription exists
             sub_id = session.get("subscription")
             if sub_id:
                 billing_repo.set_user_plan_and_tier(db, user_id, "paid", tier)
-                return {
-                    "ok": True,
-                    "event": event_type,
-                    "user_id": str(user_id),
-                    "plan": "paid",
-                    "tier": tier,
-                    "sub": sub_id,
-                }
+                return {"ok": True, "event": event_type, "user_id": str(user_id), "plan": "paid", "tier": tier, "sub": sub_id}
 
             return {"ok": True, "event": event_type, "note": "no subscription on session"}
 
-        # -----------------------------
-        # subscription.updated / deleted
-        # -----------------------------
         if event_type in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
             sub = event["data"]["object"]
             customer_id = sub.get("customer")
@@ -269,12 +248,10 @@ async def stripe_webhook(request: Request):
             is_active = status in ("active", "trialing")
 
             if is_active:
-                # Keep whatever tier we already have (set by checkout completed).
                 existing_tier = billing_repo.get_user_tier(db, user_id)
                 billing_repo.set_user_plan_and_tier(db, user_id, "paid", existing_tier)
                 return {"ok": True, "event": event_type, "user_id": str(user_id), "status": status, "plan": "paid", "tier": existing_tier}
 
-            # Not active -> free + clear tier
             billing_repo.set_user_plan_and_tier(db, user_id, "free", None)
             return {"ok": True, "event": event_type, "user_id": str(user_id), "status": status, "plan": "free", "tier": None}
 

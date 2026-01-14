@@ -1,4 +1,3 @@
-// src/app/billing/success/success-client.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -7,12 +6,18 @@ import { useRouter, useSearchParams } from "next/navigation";
 type BillingStatus = {
   ok: boolean;
   user_id: string;
-  plan: string;
+  plan: "free" | "paid" | string;
+  tier?: string | null;
   credits_balance: number;
 };
 
-async function fetchBillingStatus(sessionId: string): Promise<BillingStatus> {
-  const r = await fetch(`/api/billing/status?session_id=${encodeURIComponent(sessionId)}`, {
+function getSeekleSessionId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("seekle_session_id");
+}
+
+async function fetchBillingStatus(seekleSessionId: string): Promise<BillingStatus> {
+  const r = await fetch(`/api/billing/status?session_id=${encodeURIComponent(seekleSessionId)}`, {
     method: "GET",
     cache: "no-store",
   });
@@ -33,43 +38,47 @@ export default function SuccessClient() {
 
   const [status, setStatus] = useState<"checking" | "ok" | "error">("checking");
   const [error, setError] = useState<string | null>(null);
-  const [plan, setPlan] = useState<string | null>(null);
+  const [tier, setTier] = useState<string | null>(null);
 
   useEffect(() => {
-    const sessionId = sp.get("session_id"); // Stripe Checkout Session id in your success_url
-    if (!sessionId) {
+    // This is Stripe's Checkout Session id (cs_...), useful for debug only
+    const stripeSessionId = sp.get("stripe_session_id");
+
+    // This is what *your* billing/status endpoint needs
+    const seekleSessionId = getSeekleSessionId();
+
+    if (!seekleSessionId) {
       setStatus("error");
-      setError("Missing session_id.");
+      setError("Missing Seekle session. Please go back home and try again.");
       return;
     }
 
     let cancelled = false;
 
-    // Stripe webhook can be slightly delayed, so poll briefly
     (async () => {
       try {
-        for (let i = 0; i < 8; i++) {
-          const st = await fetchBillingStatus(sessionId);
+        // Stripe webhook can be delayed, poll briefly
+        for (let i = 0; i < 10; i++) {
+          const st = await fetchBillingStatus(seekleSessionId);
           if (cancelled) return;
 
-          // We expect paid after webhook processes
           if ((st.plan || "").toLowerCase() === "paid") {
-            setPlan(st.plan);
+            setTier(st.tier ?? null);
             setStatus("ok");
-
-            // go home after a beat (or to /account later)
             setTimeout(() => router.replace("/"), 900);
             return;
           }
 
-          // wait 700ms then retry
           await new Promise((res) => setTimeout(res, 700));
         }
 
-        // if still not paid after retries, don't fail hard — just send home
-        setPlan("pending");
+        // Don't hard fail — payment may still be processing
+        setTier("processing");
         setStatus("ok");
         setTimeout(() => router.replace("/"), 1200);
+
+        // Optional: you can console.log stripeSessionId for debugging
+        void stripeSessionId;
       } catch (e: any) {
         setStatus("error");
         setError(e?.message || "Could not confirm subscription.");
@@ -87,15 +96,13 @@ export default function SuccessClient() {
         <h1 className="text-xl font-semibold">Payment successful</h1>
 
         {status === "checking" ? (
-          <p className="mt-2 text-sm text-zinc-600">
-            Confirming your subscription…
-          </p>
+          <p className="mt-2 text-sm text-zinc-600">Confirming your subscription…</p>
         ) : null}
 
         {status === "ok" ? (
           <p className="mt-2 text-sm text-emerald-700">
-            {plan === "paid"
-              ? "You’re subscribed. Redirecting…"
+            {tier && tier !== "processing"
+              ? `You’re subscribed (${tier}). Redirecting…`
               : "Subscription is processing. Redirecting…"}
           </p>
         ) : null}

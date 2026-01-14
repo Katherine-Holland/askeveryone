@@ -2,33 +2,27 @@
 
 import React from "react";
 
-type Mode = "listening" | "thinking" | "answered";
+export type SeekleRippleMode = "listening" | "thinking" | "answered";
 
 export default function SeekleRipple({
   mode = "listening",
-  size = 140, // ⬅️ bigger
-  color = "rgba(124, 95, 76, 0.8)", // ⬅️ slightly softer taupe
+  size = 140,
+  color = "rgba(124, 95, 76, 0.53)",
 }: {
-  mode?: Mode;
+  mode?: SeekleRippleMode;
   size?: number;
   color?: string;
 }) {
   const dur =
     mode === "thinking" ? "1.4s" : mode === "answered" ? "2.8s" : "2.3s";
 
-  // Softer centre — start rings further out + lower opacity
   const ringOpacityFrom =
     mode === "thinking" ? 0.28 : mode === "answered" ? 0.14 : 0.18;
 
-  const ringOpacityTo = 0;
-
-  // ⬅️ larger starting radius = less dense middle
   const rFrom = mode === "thinking" ? 9.5 : mode === "answered" ? 10.5 : 10;
   const rTo = mode === "thinking" ? 22 : mode === "answered" ? 21.5 : 21.8;
 
-  // ⬅️ thinner stroke for elegance
   const strokeWidth = 1.4;
-
   const wrapperOpacity = mode === "answered" ? 0.6 : 1;
 
   return (
@@ -60,22 +54,8 @@ export default function SeekleRipple({
           strokeWidth={strokeWidth}
           strokeLinecap="round"
         >
-          <animate
-            attributeName="r"
-            from={String(rFrom)}
-            to={String(rTo)}
-            dur={dur}
-            begin="0s"
-            repeatCount="indefinite"
-          />
-          <animate
-            attributeName="opacity"
-            from={String(ringOpacityFrom)}
-            to={String(ringOpacityTo)}
-            dur={dur}
-            begin="0s"
-            repeatCount="indefinite"
-          />
+          <animate attributeName="r" from={String(rFrom)} to={String(rTo)} dur={dur} begin="0s" repeatCount="indefinite" />
+          <animate attributeName="opacity" from={String(ringOpacityFrom)} to="0" dur={dur} begin="0s" repeatCount="indefinite" />
         </circle>
 
         {/* Ripple B (offset) */}
@@ -88,22 +68,8 @@ export default function SeekleRipple({
           strokeWidth={strokeWidth}
           strokeLinecap="round"
         >
-          <animate
-            attributeName="r"
-            from={String(rFrom)}
-            to={String(rTo)}
-            dur={dur}
-            begin={`calc(${dur} / 2)`}
-            repeatCount="indefinite"
-          />
-          <animate
-            attributeName="opacity"
-            from={String(ringOpacityFrom)}
-            to={String(ringOpacityTo)}
-            dur={dur}
-            begin={`calc(${dur} / 2)`}
-            repeatCount="indefinite"
-          />
+          <animate attributeName="r" from={String(rFrom)} to={String(rTo)} dur={dur} begin={`calc(${dur} / 2)`} repeatCount="indefinite" />
+          <animate attributeName="opacity" from={String(ringOpacityFrom)} to="0" dur={dur} begin={`calc(${dur} / 2)`} repeatCount="indefinite" />
         </circle>
       </svg>
     </div>
