@@ -17,10 +17,13 @@ function getSeekleSessionId(): string | null {
 }
 
 async function fetchBillingStatus(seekleSessionId: string): Promise<BillingStatus> {
-  const r = await fetch(`/api/billing/status?session_id=${encodeURIComponent(seekleSessionId)}`, {
-    method: "GET",
-    cache: "no-store",
-  });
+  const r = await fetch(
+    `/api/billing/status?session_id=${encodeURIComponent(seekleSessionId)}`,
+    {
+      method: "GET",
+      cache: "no-store",
+    }
+  );
 
   const data = await r.json().catch(() => null);
 
@@ -41,10 +44,9 @@ export default function SuccessClient() {
   const [tier, setTier] = useState<string | null>(null);
 
   useEffect(() => {
-    // This is Stripe's Checkout Session id (cs_...), useful for debug only
-    const stripeSessionId = sp.get("stripe_session_id");
-
-    // This is what *your* billing/status endpoint needs
+    // Stripe Checkout Session id (cs_...) — kept for debug only
+    const stripeSessionId = sp.get("stripe_session_id") || sp.get("session_id") || null;
+    // Seekle session id (UUID) — REQUIRED for your /billing/status endpoint
     const seekleSessionId = getSeekleSessionId();
 
     if (!seekleSessionId) {
@@ -57,7 +59,7 @@ export default function SuccessClient() {
 
     (async () => {
       try {
-        // Stripe webhook can be delayed, poll briefly
+        // Webhook can be delayed, so poll briefly
         for (let i = 0; i < 10; i++) {
           const st = await fetchBillingStatus(seekleSessionId);
           if (cancelled) return;
@@ -72,16 +74,17 @@ export default function SuccessClient() {
           await new Promise((res) => setTimeout(res, 700));
         }
 
-        // Don't hard fail — payment may still be processing
+        // Don’t hard fail — may still be processing
         setTier("processing");
         setStatus("ok");
         setTimeout(() => router.replace("/"), 1200);
 
-        // Optional: you can console.log stripeSessionId for debugging
+        // Debug hook (does nothing, avoids lint unused var)
         void stripeSessionId;
-      } catch (e: any) {
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Could not confirm subscription.";
         setStatus("error");
-        setError(e?.message || "Could not confirm subscription.");
+        setError(msg);
       }
     })();
 
