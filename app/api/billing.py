@@ -50,11 +50,6 @@ async def stripe_diagnostics():
     - do we have prices set?
     Does NOT call Stripe (safe).
     """
-    def _mask(s: str) -> str:
-        if not s:
-            return ""
-        return s[:6] + "…" + s[-4:]
-
     return {
         "ok": True,
         "stripe_secret_key_set": bool(settings.stripe_secret_key),
@@ -93,7 +88,6 @@ async def billing_status(session_id: str):
         bal = billing_repo.get_balance(db, user_id)
         plan = billing_repo.get_user_plan(db, user_id)
 
-        # if you have tier support in repo/models
         tier = None
         try:
             tier = billing_repo.get_user_tier(db, user_id)
@@ -120,9 +114,6 @@ async def billing_status(session_id: str):
 async def billing_start(payload: dict = Body(...)):
     """
     Attach an email/user to a session so checkout can work even if they haven't done the free flow.
-    This expects your auth flow already supports creating user + linking to session,
-    but we keep it minimal here: require session exists, and require user is already linked.
-    If you already implemented a more complete version elsewhere, keep that one.
     """
     session_id = (payload.get("session_id") or "").strip()
     email = (payload.get("email") or "").strip().lower()
@@ -146,11 +137,7 @@ async def billing_start(payload: dict = Body(...)):
         )
         db.commit()
 
-        # If your auth system links users to sessions via magic link,
-        # this endpoint can just return ok and the UI will continue after login.
-        # But your UI wants upgrade-first, so we create/get a user by email here.
-
-        # 1) get or create user
+        # get or create user
         row = db.execute(
             text("select user_id from users where email=:e"),
             {"e": email},
@@ -159,17 +146,14 @@ async def billing_start(payload: dict = Body(...)):
         if row and row[0]:
             user_id = row[0]
         else:
-            # create user minimal (passwordless)
             user_id = uuid.uuid4()
             db.execute(
-                text(
-                    "insert into users (user_id, email) values (:uid, :e)"
-                ),
+                text("insert into users (user_id, email) values (:uid, :e)"),
                 {"uid": user_id, "e": email},
             )
             db.commit()
 
-        # 2) attach user to session
+        # attach user to session
         db.execute(
             text("update chat_sessions set user_id=:uid, is_anonymous=false where session_id=:sid"),
             {"uid": user_id, "sid": session_id},
@@ -211,7 +195,7 @@ async def create_checkout(session_id: str, plan: str):
         if not db:
             raise HTTPException(status_code=500, detail="DB not configured")
 
-        # Resolve user from session (must be logged in / attached)
+        # Resolve user from session (must be attached)
         row = db.execute(
             text("select user_id from chat_sessions where session_id=:sid"),
             {"sid": session_id},
@@ -232,11 +216,8 @@ async def create_checkout(session_id: str, plan: str):
         ).fetchone()
         stripe_customer_id = row2[0] if row2 and row2[0] else None
 
-        # Helper: create + persist a customer (fresh for current mode)
         def _create_and_store_customer() -> str:
-            cust = stripe.Customer.create(
-                metadata={"user_id": str(user_id)},
-            )
+            cust = stripe.Customer.create(metadata={"user_id": str(user_id)})
             cid = cust["id"]
             db.execute(
                 text("update users set stripe_customer_id=:cid where user_id=:uid"),
@@ -245,18 +226,15 @@ async def create_checkout(session_id: str, plan: str):
             db.commit()
             return cid
 
-        # If missing, create
         if not stripe_customer_id:
             stripe_customer_id = _create_and_store_customer()
         else:
-            # Validate customer exists in current mode; if not, recreate.
+            # If the stored customer id belongs to the *other* mode (test vs live), this will fail.
             try:
                 stripe.Customer.retrieve(stripe_customer_id)
             except Exception:
-                # This is the exact “No such customer … exists in test/live mode” issue.
                 stripe_customer_id = _create_and_store_customer()
 
-        # Stripe-hosted Checkout success/cancel
         success_url = _safe_frontend_url("/billing/success?stripe_session_id={CHECKOUT_SESSION_ID}")
         cancel_url = _safe_frontend_url("/billing/cancel")
 
@@ -271,7 +249,6 @@ async def create_checkout(session_id: str, plan: str):
                 "user_id": str(user_id),
                 "tier": tier,
                 "price_id": price_id,
-                # helpful when debugging:
                 "seekle_session_id": session_id,
             },
         )
@@ -291,6 +268,9 @@ async def stripe_webhook(request: Request):
     Subscription webhooks:
     - checkout.session.completed -> record paid + tier
     - customer.subscription.updated/deleted -> keep plan accurate
+
+    IMPORTANT:
+    We *fail-open* on stripe_events logging so Stripe doesn't retry forever due to schema mismatch.
     """
     if not settings.stripe_webhook_secret:
         raise HTTPException(status_code=500, detail="STRIPE_WEBHOOK_SECRET not set")
@@ -312,7 +292,10 @@ async def stripe_webhook(request: Request):
             secret=settings.stripe_webhook_secret,
         )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Stripe signature verification failed: {type(e).__name__}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Stripe signature verification failed: {type(e).__name__}",
+        )
 
     db = None
     try:
@@ -331,13 +314,30 @@ async def stripe_webhook(request: Request):
         if exists:
             return {"ok": True, "skipped": True}
 
-        # record event
-        db.execute(
-            text("insert into stripe_events (event_id, type, raw_json) values (:eid, :t, :raw)"),
-            {"eid": event_id, "t": event_type, "raw": payload.decode("utf-8")[:5000]},
-        )
-        db.commit()
+        # ----------------------------
+        # ✅ Safe event logging (fail-open)
+        # ----------------------------
+        raw = payload.decode("utf-8")[:5000]
+        try:
+            db.execute(
+                text("insert into stripe_events (event_id, type, raw_json) values (:eid, :t, :raw)"),
+                {"eid": event_id, "t": event_type, "raw": raw},
+            )
+            db.commit()
+        except Exception:
+            # If schema differs (e.g. missing "type"), try a minimal insert.
+            db.rollback()
+            try:
+                db.execute(
+                    text("insert into stripe_events (event_id, raw_json) values (:eid, :raw)"),
+                    {"eid": event_id, "raw": raw},
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                # Don't crash the webhook — still continue processing below.
 
+        # Helper: find user by stripe customer
         def _user_id_from_customer(customer_id: str) -> Optional[uuid.UUID]:
             row = db.execute(
                 text("select user_id from users where stripe_customer_id=:cid"),
@@ -345,7 +345,9 @@ async def stripe_webhook(request: Request):
             ).fetchone()
             return row[0] if row and row[0] else None
 
+        # -----------------------------
         # checkout.session.completed
+        # -----------------------------
         if event_type == "checkout.session.completed":
             session = event["data"]["object"]
             md = session.get("metadata") or {}
@@ -361,29 +363,46 @@ async def stripe_webhook(request: Request):
             except Exception:
                 return {"ok": True, "ignored": "bad_user_id"}
 
-            # store customer id
             stripe_customer_id = session.get("customer")
             if stripe_customer_id:
-                db.execute(
-                    text("update users set stripe_customer_id=:cid where user_id=:uid"),
-                    {"cid": stripe_customer_id, "uid": user_id},
-                )
-                db.commit()
+                try:
+                    db.execute(
+                        text("update users set stripe_customer_id=:cid where user_id=:uid"),
+                        {"cid": stripe_customer_id, "uid": user_id},
+                    )
+                    db.commit()
+                except Exception:
+                    db.rollback()
 
             sub_id = session.get("subscription")
             if sub_id:
-                # requires your repo method; if not available, fall back to plan only
                 try:
                     billing_repo.set_user_plan_and_tier(db, user_id, "paid", tier)
                 except Exception:
-                    billing_repo.set_user_plan(db, user_id, "paid")
+                    try:
+                        billing_repo.set_user_plan(db, user_id, "paid")
+                    except Exception:
+                        pass
 
-                return {"ok": True, "event": event_type, "user_id": str(user_id), "plan": "paid", "tier": tier, "sub": sub_id}
+                return {
+                    "ok": True,
+                    "event": event_type,
+                    "user_id": str(user_id),
+                    "plan": "paid",
+                    "tier": tier,
+                    "sub": sub_id,
+                }
 
             return {"ok": True, "event": event_type, "note": "no subscription on session"}
 
-        # subscription lifecycle
-        if event_type in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
+        # -----------------------------
+        # subscription.updated / deleted
+        # -----------------------------
+        if event_type in (
+            "customer.subscription.created",
+            "customer.subscription.updated",
+            "customer.subscription.deleted",
+        ):
             sub = event["data"]["object"]
             customer_id = sub.get("customer")
             status = (sub.get("status") or "").lower()
@@ -398,23 +417,46 @@ async def stripe_webhook(request: Request):
             is_active = status in ("active", "trialing")
 
             if is_active:
-                # keep current tier
                 existing_tier = None
                 try:
                     existing_tier = billing_repo.get_user_tier(db, user_id)
+                except Exception:
+                    existing_tier = None
+
+                try:
                     billing_repo.set_user_plan_and_tier(db, user_id, "paid", existing_tier)
                 except Exception:
-                    billing_repo.set_user_plan(db, user_id, "paid")
+                    try:
+                        billing_repo.set_user_plan(db, user_id, "paid")
+                    except Exception:
+                        pass
 
-                return {"ok": True, "event": event_type, "user_id": str(user_id), "status": status, "plan": "paid", "tier": existing_tier}
+                return {
+                    "ok": True,
+                    "event": event_type,
+                    "user_id": str(user_id),
+                    "status": status,
+                    "plan": "paid",
+                    "tier": existing_tier,
+                }
 
-            # inactive -> free, clear tier
+            # Not active -> free + clear tier
             try:
                 billing_repo.set_user_plan_and_tier(db, user_id, "free", None)
             except Exception:
-                billing_repo.set_user_plan(db, user_id, "free")
+                try:
+                    billing_repo.set_user_plan(db, user_id, "free")
+                except Exception:
+                    pass
 
-            return {"ok": True, "event": event_type, "user_id": str(user_id), "status": status, "plan": "free", "tier": None}
+            return {
+                "ok": True,
+                "event": event_type,
+                "user_id": str(user_id),
+                "status": status,
+                "plan": "free",
+                "tier": None,
+            }
 
         return {"ok": True, "ignored": event_type}
 
