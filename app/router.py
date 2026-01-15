@@ -1,4 +1,5 @@
-#We are using Chatgpt as the 'telephone exchange' router helper. This will choose the best LLM for the query.
+# app/router.py
+# We are using ChatGPT as the 'telephone exchange' router helper. This will choose the best LLM for the query.
 
 import json
 import httpx
@@ -29,11 +30,11 @@ INTENTS (choose exactly one):
 - GENERAL_CHAT
 
 ROUTING RULES (provider order by intent):
-1) LIVE_FRESH: GROK > PERPLEXITY > GEMINI > OPENAI
+1) LIVE_FRESH: PERPLEXITY > GROK > GEMINI > OPENAI
 2) WEB_RESEARCH_CITATIONS: PERPLEXITY > GEMINI > OPENAI > CLAUDE
 3) LOCAL_NEAR_ME: PERPLEXITY > GEMINI > OPENAI
 4) HOW_TO_TROUBLESHOOT: OPENAI > CLAUDE > GEMINI > PERPLEXITY
-5) CODING_TECH: OPENAI > CLAUDE
+5) CODING_TECH: CLAUDE > OPENAI
 6) DATA_MATH_QUANT: OPENAI > CLAUDE
 7) WRITING_EDITING_MARKETING: CLAUDE > OPENAI
 8) CREATIVE_BRAINSTORM: OPENAI > CLAUDE

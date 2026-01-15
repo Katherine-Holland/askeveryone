@@ -89,7 +89,7 @@ export default function PricingPage() {
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">Upgrade</h1>
             <p className="mt-2 text-sm text-seekle-subtext">
-              Keep it simple: Starter is live. Plus and Power are coming soon.
+              Seekle Pro and Seekle Power are coming soon.
             </p>
           </div>
 
@@ -142,14 +142,14 @@ export default function PricingPage() {
             </div>
 
             <div className="mt-3 text-sm text-seekle-subtext">
-              Ad-free. More daily questions. Built for everyday use.
+              Start seeking with our starter pack! Starter: 200 credits/month (1 credit = 1 search).
             </div>
 
             <ul className="mt-6 space-y-2 text-sm text-seekle-text">
-              <li>• Ad-free experience</li>
-              <li>• Higher daily limits</li>
-              <li>• Saved conversation (basic)</li>
-              <li>• Same providers as everyone</li>
+              <li>• Switches between models for seamless chat</li>
+              <li>• 200 searches a month</li>
+              <li>• Saved conversations</li>
+              <li>• Models included: ChatGPT, Perplexity, Gemini, Claude & Grok</li>
             </ul>
 
             <button
@@ -169,21 +169,21 @@ export default function PricingPage() {
           {/* Plus (COMING SOON) */}
           <div className="rounded-3xl border border-seekle-border bg-white/70 p-7 opacity-70">
             <div className="flex items-center justify-between">
-              <div className="text-sm text-seekle-subtext">Plus</div>
+              <div className="text-sm text-seekle-subtext">Pro</div>
               <span className="rounded-full bg-seekle-muted px-3 py-1 text-xs text-seekle-subtext">
-                Coming soon
+                Coming soon. Seek knowledge with more tokens, become a Pro Seekler!
               </span>
             </div>
 
             <div className="mt-3 text-3xl font-semibold tracking-tight">—</div>
             <div className="mt-3 text-sm text-seekle-subtext">
-              More ecosystem features as Seekle expands.
+              More features coming soon.
             </div>
 
             <ul className="mt-6 space-y-2 text-sm text-seekle-text">
-              <li>• Deeper conversation history</li>
-              <li>• Export/import tools (Phase 2)</li>
-              <li>• Integrations (Slack/HubSpot)</li>
+              <li>• Ad Free</li>
+              <li>• Export/import tools</li>
+              <li>• Integrations</li>
             </ul>
 
             <div className="mt-7 w-full rounded-full px-5 py-3 border border-seekle-border bg-white text-seekle-subtext text-center cursor-not-allowed">
@@ -196,19 +196,19 @@ export default function PricingPage() {
             <div className="flex items-center justify-between">
               <div className="text-sm text-seekle-subtext">Power</div>
               <span className="rounded-full bg-seekle-muted px-3 py-1 text-xs text-seekle-subtext">
-                Coming soon
+                Coming soon. Choose Power Mode to seek like a Boss!
               </span>
             </div>
 
             <div className="mt-3 text-3xl font-semibold tracking-tight">—</div>
             <div className="mt-3 text-sm text-seekle-subtext">
-              Advanced workflows for builders.
+              Plus, advanced workflows for developers.
             </div>
 
             <ul className="mt-6 space-y-2 text-sm text-seekle-text">
-              <li>• .chat exports + snapshots</li>
-              <li>• Build mode (files/patches)</li>
-              <li>• Voice + add-ons later</li>
+              <li>• Intent Logging</li>
+              <li>• Build mode</li>
+              <li>• Secret Stuff</li>
             </ul>
 
             <div className="mt-7 w-full rounded-full px-5 py-3 border border-seekle-border bg-white text-seekle-subtext text-center cursor-not-allowed">
