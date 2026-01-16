@@ -38,6 +38,31 @@ type SavedThread = {
   resp: AskResponse;
 };
 
+// --- Billing (for credits badge) ---
+type BillingStatus = {
+  ok: boolean;
+  user_id: string;
+  plan: "free" | "paid" | string;
+  tier?: string | null;
+  credits_balance: number;
+};
+
+async function fetchBillingStatus(
+  seekleSessionId: string
+): Promise<BillingStatus | null> {
+  try {
+    const r = await fetch(
+      `/api/billing/status?session_id=${encodeURIComponent(seekleSessionId)}`,
+      { method: "GET", cache: "no-store" }
+    );
+    if (!r.ok) return null;
+    const data = (await r.json()) as BillingStatus;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 // localStorage keys
 const LS_THREADS = "seekle_threads_v1";
 const LS_ACTIVE = "seekle_threads_active_v1";
@@ -98,6 +123,10 @@ export default function Home() {
 
   const [loginOpen, setLoginOpen] = useState(false);
 
+  // Billing badge + toast
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
   // Dev-only debug visibility (off by default)
   const [debug, setDebug] = useState(false);
   const canShowDebug = process.env.NODE_ENV === "development";
@@ -122,10 +151,18 @@ export default function Home() {
     setThreads(t);
     setActiveThreadId(a);
 
-    // decide if we show sidebar (logged-in only)
+    // decide if we show sidebar (logged-in only) + pull billing
     void (async () => {
       const ok = await isLoggedIn(sid);
       setShowSidebar(ok);
+
+      if (ok) {
+        const st = await fetchBillingStatus(sid);
+        setBilling(st);
+      } else {
+        setBilling(null);
+      }
+
       // if active thread exists, load it
       if (ok && a) {
         const found = t.find((x) => x.id === a);
@@ -152,6 +189,12 @@ export default function Home() {
       setResp(out);
       setThoughtKey((k) => k + 1);
       setQuery("");
+
+      // refresh credits badge (logged-in only)
+      if (showSidebar) {
+        const st = await fetchBillingStatus(sessionId);
+        setBilling(st);
+      }
 
       // If logged in, save to sidebar as a “thread”
       if (showSidebar) {
@@ -184,6 +227,10 @@ export default function Home() {
     }
   }
 
+  function onLogin() {
+    setLoginOpen(true);
+  }
+
   function onLogout() {
     setResp(null);
     setError(null);
@@ -195,13 +242,33 @@ export default function Home() {
 
     // sidebar off for anon
     setShowSidebar(false);
+    setBilling(null);
     setActiveThreadId(null);
     saveActiveId(null);
+
+    // UX toast
+    setToast("Logged out");
+    setTimeout(() => setToast(null), 1800);
 
     window.location.assign("/");
   }
 
   function onUpgrade() {
+    window.location.href = "/pricing";
+  }
+
+  async function onManagePlan() {
+    try {
+      const r = await fetch(
+        `/api/billing/portal?session_id=${encodeURIComponent(sessionId)}`,
+        { method: "POST" }
+      );
+      const data = await r.json().catch(() => null);
+      if (r.ok && data?.url) {
+        window.location.href = data.url;
+        return;
+      }
+    } catch {}
     window.location.href = "/pricing";
   }
 
@@ -211,14 +278,12 @@ export default function Home() {
     setActiveThreadId(id);
     saveActiveId(id);
 
-    // Replace answer in place (no “scrolling chat”)
     setResp(found.resp);
     setThoughtKey((k) => k + 1);
     setError(null);
   }
 
   function onNewThread() {
-    // “New” just clears the current answer area
     setActiveThreadId(null);
     saveActiveId(null);
     setResp(null);
@@ -237,15 +302,33 @@ export default function Home() {
     [threads]
   );
 
+  const usageLabel = billing
+    ? `${String(billing.tier || billing.plan || "free")} · Credits: ${
+        billing.credits_balance
+      }`
+    : undefined;
+
   return (
     <main className="min-h-screen bg-seekle-cream text-seekle-text">
+      {/* Toast */}
+      {toast ? (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50">
+          <div className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-zinc-700 shadow-sm">
+            {toast}
+          </div>
+        </div>
+      ) : null}
+
       {/* Fixed top-right account menu */}
       <div className="fixed top-6 right-6 z-50">
         {mounted ? (
           <AccountMenu
+            isLoggedIn={!!showSidebar}
+            onLogin={onLogin}
             onLogout={onLogout}
             onUpgrade={onUpgrade}
-            usageLabel={undefined}
+            onManagePlan={onManagePlan}
+            usageLabel={usageLabel}
             debugSession={canShowDebug && debug ? sessionId : null}
           />
         ) : null}
@@ -261,6 +344,15 @@ export default function Home() {
                 activeId={activeThreadId}
                 onSelect={onSelectThread}
                 onNew={onNewThread}
+                credits={billing?.credits_balance ?? null}
+                planLabel={
+                  billing?.tier
+                    ? billing.tier.charAt(0).toUpperCase() +
+                      billing.tier.slice(1)
+                    : billing?.plan === "paid"
+                    ? "Starter"
+                    : "Free"
+                }
               />
             ) : null}
 
@@ -283,32 +375,45 @@ export default function Home() {
                     <div className="seekle-input-glow" />
                     <div className="seekle-input-sheen" />
 
-                    <div className="flex gap-2 items-center relative">
-                      <input
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Ask or type..."
-                        className="flex-1 rounded-full border border-seekle-border bg-white px-5 py-3 text-base outline-none"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            void runAsk();
-                          }
-                        }}
-                      />
+                    <div className="flex gap-2 items-end relative">
+                      <div className="relative flex-1">
+                        <textarea
+                          value={query}
+                          onChange={(e) => setQuery(e.target.value)}
+                          placeholder="Ask or type..."
+                          rows={1}
+                          className="w-full resize-none rounded-2xl border border-seekle-border bg-white px-5 py-3 pr-12 text-base outline-none leading-6 min-h-[52px] max-h-[180px] overflow-y-auto"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              void runAsk();
+                            }
+                          }}
+                        />
+
+                        {query.trim().length > 0 ? (
+                          <button
+                            type="button"
+                            aria-label="Clear"
+                            onClick={() => setQuery("")}
+                            className="absolute right-3 top-3 rounded-full border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
+                          >
+                            X
+                          </button>
+                        ) : null}
+                      </div>
 
                       <button
                         type="button"
                         onClick={() => void runAsk()}
                         disabled={loading || !query.trim() || !sessionId}
-                        className="rounded-full px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brown-hover disabled:opacity-50"
+                        className="rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brown-hover disabled:opacity-50 min-h-[52px]"
                       >
-                        {loading ? "…" : "Search"}
+                        {loading ? "Asking" : "Ask"}
                       </button>
                     </div>
                   </div>
 
-                  {/* Ripple always present */}
                   <SeekleRipple mode={rippleMode} size={110} />
 
                   <div className="mt-8 space-y-3">
@@ -333,7 +438,6 @@ export default function Home() {
                     ) : null}
                   </div>
 
-                  {/* Dev-only debug toggle */}
                   {mounted && canShowDebug ? (
                     <div className="mt-8 flex items-center justify-center gap-3 text-xs text-zinc-400">
                       <button
@@ -351,9 +455,25 @@ export default function Home() {
                     onClose={() => setLoginOpen(false)}
                     sessionId={sessionId}
                   />
+
+                  <div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-zinc-500">
+                    <a className="hover:text-zinc-700" href="/privacy">
+                      Privacy
+                    </a>
+                    <a className="hover:text-zinc-700" href="/terms">
+                      Terms
+                    </a>
+                    <a className="hover:text-zinc-700" href="/ai-policy">
+                      AI / LLM Policy
+                    </a>
+                    <a className="hover:text-zinc-700" href="/contact">
+                      Contact
+                    </a>
+                  </div>
                 </div>
               </div>
             </div>
+            {/* end main column */}
           </div>
         </div>
       </div>

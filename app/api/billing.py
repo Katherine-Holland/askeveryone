@@ -39,6 +39,22 @@ def _safe_frontend_url(path: str) -> str:
     return base.rstrip("/") + path
 
 
+def _get_user_id_from_session(db, session_id: str):
+    row = db.execute(
+        text("select user_id from chat_sessions where session_id=:sid"),
+        {"sid": session_id},
+    ).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def _get_stripe_customer_id(db, user_id):
+    row = db.execute(
+        text("select stripe_customer_id from users where user_id=:uid"),
+        {"uid": user_id},
+    ).fetchone()
+    return row[0] if row and row[0] else None
+
+
 # ----------------------------
 # Diagnostics (helps a LOT)
 # ----------------------------
@@ -75,12 +91,7 @@ async def billing_status(session_id: str):
         if not db:
             raise HTTPException(status_code=500, detail="DB not configured")
 
-        row = db.execute(
-            text("select user_id from chat_sessions where session_id=:sid"),
-            {"sid": session_id},
-        ).fetchone()
-
-        user_id = row[0] if row and row[0] else None
+        user_id = _get_user_id_from_session(db, session_id)
         if not user_id:
             raise HTTPException(status_code=401, detail="Not logged in")
 
@@ -195,12 +206,7 @@ async def create_checkout(session_id: str, plan: str):
         if not db:
             raise HTTPException(status_code=500, detail="DB not configured")
 
-        # Resolve user from session (must be attached)
-        row = db.execute(
-            text("select user_id from chat_sessions where session_id=:sid"),
-            {"sid": session_id},
-        ).fetchone()
-        user_id = row[0] if row and row[0] else None
+        user_id = _get_user_id_from_session(db, session_id)
         if not user_id:
             raise HTTPException(status_code=401, detail="Not logged in")
 
@@ -209,12 +215,7 @@ async def create_checkout(session_id: str, plan: str):
         import stripe  # type: ignore
         stripe.api_key = settings.stripe_secret_key
 
-        # Fetch stripe_customer_id
-        row2 = db.execute(
-            text("select stripe_customer_id from users where user_id=:uid"),
-            {"uid": user_id},
-        ).fetchone()
-        stripe_customer_id = row2[0] if row2 and row2[0] else None
+        stripe_customer_id = _get_stripe_customer_id(db, user_id)
 
         def _create_and_store_customer() -> str:
             cust = stripe.Customer.create(metadata={"user_id": str(user_id)})
@@ -229,7 +230,6 @@ async def create_checkout(session_id: str, plan: str):
         if not stripe_customer_id:
             stripe_customer_id = _create_and_store_customer()
         else:
-            # If the stored customer id belongs to the *other* mode (test vs live), this will fail.
             try:
                 stripe.Customer.retrieve(stripe_customer_id)
             except Exception:
@@ -254,6 +254,98 @@ async def create_checkout(session_id: str, plan: str):
         )
 
         return {"ok": True, "url": checkout["url"]}
+    finally:
+        if db:
+            db.close()
+
+
+# ----------------------------
+# ✅ Stripe Customer Portal (Manage plan / cancel / update card)
+# ----------------------------
+@router.post("/portal")
+async def billing_portal(session_id: str):
+    """
+    Returns a Stripe Customer Portal URL so the user can:
+    - cancel subscription
+    - update payment method
+    - view invoices
+    """
+    if not settings.stripe_secret_key:
+        raise HTTPException(status_code=500, detail="STRIPE_SECRET_KEY not set")
+
+    db = None
+    try:
+        db = get_session()
+        if not db:
+            raise HTTPException(status_code=500, detail="DB not configured")
+
+        user_id = _get_user_id_from_session(db, session_id)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Not logged in")
+
+        import stripe  # type: ignore
+        stripe.api_key = settings.stripe_secret_key
+
+        stripe_customer_id = _get_stripe_customer_id(db, user_id)
+        if not stripe_customer_id:
+            raise HTTPException(status_code=400, detail="No Stripe customer found for user")
+
+        return_url = _safe_frontend_url("/")  # where to return after portal
+
+        portal = stripe.billing_portal.Session.create(
+            customer=stripe_customer_id,
+            return_url=return_url,
+        )
+        return {"ok": True, "url": portal["url"]}
+    finally:
+        if db:
+            db.close()
+
+
+# ----------------------------
+# (Optional) Simple cancel endpoint
+# If you add a UI button, this can cancel at period end.
+# ----------------------------
+@router.post("/cancel")
+async def billing_cancel(session_id: str):
+    """
+    Cancels the active subscription at period end (keeps access until end of cycle).
+    Prefer using the Portal in most cases.
+    """
+    if not settings.stripe_secret_key:
+        raise HTTPException(status_code=500, detail="STRIPE_SECRET_KEY not set")
+
+    db = None
+    try:
+        db = get_session()
+        if not db:
+            raise HTTPException(status_code=500, detail="DB not configured")
+
+        user_id = _get_user_id_from_session(db, session_id)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Not logged in")
+
+        import stripe  # type: ignore
+        stripe.api_key = settings.stripe_secret_key
+
+        # Try to find the subscription via Stripe customer (most reliable)
+        stripe_customer_id = _get_stripe_customer_id(db, user_id)
+        if not stripe_customer_id:
+            raise HTTPException(status_code=400, detail="No Stripe customer found")
+
+        subs = stripe.Subscription.list(customer=stripe_customer_id, status="all", limit=5)
+        sub_id = None
+        for s in (subs.get("data") or []):
+            st = (s.get("status") or "").lower()
+            if st in ("active", "trialing", "past_due"):
+                sub_id = s.get("id")
+                break
+
+        if not sub_id:
+            return {"ok": True, "note": "no_active_subscription"}
+
+        stripe.Subscription.modify(sub_id, cancel_at_period_end=True)
+        return {"ok": True, "cancel_at_period_end": True, "subscription_id": sub_id}
     finally:
         if db:
             db.close()
@@ -314,9 +406,7 @@ async def stripe_webhook(request: Request):
         if exists:
             return {"ok": True, "skipped": True}
 
-        # ----------------------------
         # ✅ Safe event logging (fail-open)
-        # ----------------------------
         raw = payload.decode("utf-8")[:5000]
         try:
             db.execute(
@@ -325,7 +415,6 @@ async def stripe_webhook(request: Request):
             )
             db.commit()
         except Exception:
-            # If schema differs (e.g. missing "type"), try a minimal insert.
             db.rollback()
             try:
                 db.execute(
@@ -335,9 +424,8 @@ async def stripe_webhook(request: Request):
                 db.commit()
             except Exception:
                 db.rollback()
-                # Don't crash the webhook — still continue processing below.
+                # do not crash webhook
 
-        # Helper: find user by stripe customer
         def _user_id_from_customer(customer_id: str) -> Optional[uuid.UUID]:
             row = db.execute(
                 text("select user_id from users where stripe_customer_id=:cid"),
@@ -345,9 +433,6 @@ async def stripe_webhook(request: Request):
             ).fetchone()
             return row[0] if row and row[0] else None
 
-        # -----------------------------
-        # checkout.session.completed
-        # -----------------------------
         if event_type == "checkout.session.completed":
             session = event["data"]["object"]
             md = session.get("metadata") or {}
@@ -395,9 +480,6 @@ async def stripe_webhook(request: Request):
 
             return {"ok": True, "event": event_type, "note": "no subscription on session"}
 
-        # -----------------------------
-        # subscription.updated / deleted
-        # -----------------------------
         if event_type in (
             "customer.subscription.created",
             "customer.subscription.updated",
@@ -440,7 +522,6 @@ async def stripe_webhook(request: Request):
                     "tier": existing_tier,
                 }
 
-            # Not active -> free + clear tier
             try:
                 billing_repo.set_user_plan_and_tier(db, user_id, "free", None)
             except Exception:

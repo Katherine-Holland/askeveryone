@@ -8,26 +8,51 @@ export type SidebarItem = {
   createdAt: number;
 };
 
+type Props = {
+  items: SidebarItem[];
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+
+  // ✅ New (optional): show credits + plan
+  credits?: number | null;
+  planLabel?: string | null; // e.g. "Starter" or "Free"
+};
+
 export default function ChatSidebar({
   items,
   activeId,
   onSelect,
   onNew,
-}: {
-  items: SidebarItem[];
-  activeId: string | null;
-  onSelect: (id: string) => void;
-  onNew: () => void;
-}) {
+  credits = null,
+  planLabel = null,
+}: Props) {
+  const creditsText =
+    typeof credits === "number" ? `${credits.toLocaleString()} credits` : "…";
+
+  const planText = (planLabel || "").trim() || "Account";
+
   return (
     <aside className="hidden lg:flex lg:w-72 xl:w-80 shrink-0">
       <div className="w-full rounded-2xl border border-seekle-border bg-white/70 backdrop-blur-sm overflow-hidden">
-        <div className="p-4 border-b border-seekle-border flex items-center justify-between">
-          <div className="text-sm font-medium text-zinc-800">Saved questions</div>
+        <div className="p-4 border-b border-seekle-border flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-zinc-800 truncate">
+              {planText}
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-600">
+              <span className="inline-flex items-center rounded-full border border-seekle-border bg-white px-2 py-0.5">
+                {creditsText}
+              </span>
+              <span className="text-zinc-400">·</span>
+              <span className="text-zinc-500">Saved questions</span>
+            </div>
+          </div>
+
           <button
             type="button"
             onClick={onNew}
-            className="rounded-full px-3 py-1 text-xs border border-seekle-border bg-white hover:bg-zinc-50 text-zinc-700"
+            className="shrink-0 rounded-full px-3 py-1 text-xs border border-seekle-border bg-white hover:bg-zinc-50 text-zinc-700"
           >
             New
           </button>

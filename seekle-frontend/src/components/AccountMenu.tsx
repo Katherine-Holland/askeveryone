@@ -3,13 +3,24 @@
 import { useEffect, useRef, useState } from "react";
 
 type Props = {
+  isLoggedIn: boolean;
+  onLogin: () => void;
   onLogout: () => void;
   onUpgrade?: () => void;
-  usageLabel?: string; // placeholder for now
-  debugSession?: string | null; // only pass in dev if you want
+  onManagePlan?: () => void;
+  usageLabel?: string;
+  debugSession?: string | null;
 };
 
-export default function AccountMenu({ onLogout, onUpgrade, usageLabel, debugSession }: Props) {
+export default function AccountMenu({
+  isLoggedIn,
+  onLogin,
+  onLogout,
+  onUpgrade,
+  onManagePlan,
+  usageLabel,
+  debugSession,
+}: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -38,16 +49,18 @@ export default function AccountMenu({ onLogout, onUpgrade, usageLabel, debugSess
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        Account
+        {isLoggedIn ? "Account" : "Log in"}
       </button>
 
       {open ? (
-        <div className="absolute right-0 mt-2 w-56 rounded-xl border border-zinc-200 bg-white shadow-lg overflow-hidden">
+        <div className="absolute right-0 mt-2 w-64 rounded-xl border border-zinc-200 bg-white shadow-lg overflow-hidden">
           <div className="px-4 py-3 text-xs text-zinc-500">
-            <div className="font-medium text-zinc-700">Account</div>
+            <div className="font-medium text-zinc-700">
+              {isLoggedIn ? "Account" : "Welcome"}
+            </div>
+
             {usageLabel ? <div className="mt-2">{usageLabel}</div> : null}
 
-            {/* Dev-only debug (only shows if you pass debugSession) */}
             {debugSession ? (
               <div className="mt-2 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
                 <div className="text-[11px] text-zinc-500">Debug session:</div>
@@ -60,40 +73,72 @@ export default function AccountMenu({ onLogout, onUpgrade, usageLabel, debugSess
 
           <div className="h-px bg-zinc-100" />
 
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              onUpgrade?.();
-            }}
-            className="w-full text-left px-4 py-3 text-sm hover:bg-zinc-50"
-          >
-            Upgrade
-          </button>
+          {!isLoggedIn ? (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onLogin();
+              }}
+              className="w-full text-left px-4 py-3 text-sm hover:bg-zinc-50"
+            >
+              Log in
+            </button>
+          ) : (
+            <>
+              {onUpgrade ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    onUpgrade();
+                  }}
+                  className="w-full text-left px-4 py-3 text-sm hover:bg-zinc-50"
+                >
+                  Upgrade
+                </button>
+              ) : null}
 
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              alert("Usage page coming next.");
-            }}
-            className="w-full text-left px-4 py-3 text-sm hover:bg-zinc-50"
-          >
-            Usage
-          </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onManagePlan?.();
+                }}
+                disabled={!onManagePlan}
+                className={[
+                  "w-full text-left px-4 py-3 text-sm hover:bg-zinc-50",
+                  !onManagePlan ? "opacity-50 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                Manage plan / Cancel
+              </button>
 
-          <div className="h-px bg-zinc-100" />
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  alert("Usage page coming next.");
+                }}
+                className="w-full text-left px-4 py-3 text-sm hover:bg-zinc-50"
+              >
+                Usage
+              </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              onLogout();
-            }}
-            className="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-zinc-50"
-          >
-            Log out
-          </button>
+              <div className="h-px bg-zinc-100" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onLogout();
+                }}
+                className="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-zinc-50"
+              >
+                Log out
+              </button>
+            </>
+          )}
         </div>
       ) : null}
     </div>
