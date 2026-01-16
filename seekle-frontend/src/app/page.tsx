@@ -551,7 +551,7 @@ export default function Home() {
                       Terms
                     </a>
                     <a className="hover:text-zinc-700" href="/ai-policy">
-                      LLM Compliance Policy – Responsible, compliant use of AI systems.
+                      LLM Compliance Policy
                     </a>
                     <a className="hover:text-zinc-700" href="/contact">
                       Contact
