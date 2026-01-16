@@ -44,15 +44,24 @@ WEB_CITE_PRIMARY_MAX_TOKENS = 900         # citations/research benefit from leng
 
 # ----------------------------
 # Provider refusal / stall detection
-# (prevents "I can't browse/live" reaching UI)
+# (prevents "I can't browse/live" OR "knowledge cutoff" reaching UI)
 # ----------------------------
 _REFUSAL_PATTERNS = [
+    # classic "can't browse" / "no live data"
     r"\b(i (do not|don't) have access to (real[-\s]?time|live|current) (data|news|information))\b",
     r"\b(i (cannot|can't) (browse|access the internet|check (the )?web|verify in real time))\b",
+    r"\b(i (do not|don't) have (the )?ability to browse the web)\b",
+
+    # deflections
     r"\b(check (google news|google trends|twitter|x|a news aggregator|your preferred aggregator))\b",
-    r"\b(as of\s+\w+\s+\d{1,2},\s+\d{4},\s+i (do not|don't) have access)\b",
     r"\b(headlines shift fast)\b",
     r"\b(what('s| is) a specific topic you're curious about\?)\b",
+
+    # NEW: "knowledge cutoff" disclaimers (the edge case you hit)
+    r"\b(as of my last knowledge update)\b",
+    r"\b(last knowledge update)\b",
+    r"\b(i cannot confirm if .{0,40} (still|currently) (in office|true|accurate))\b",
+    r"\b(i (cannot|can't) confirm (that|this) (is|it's) still)\b",
 ]
 
 def _looks_like_refusal(text: str) -> bool:
@@ -66,6 +75,29 @@ def _looks_like_refusal(text: str) -> bool:
         if re.search(pat, tl, re.IGNORECASE):
             return True
     return False
+
+
+# ----------------------------
+# Deterministic freshness gate (extra safety)
+# If query matches office-holder / time-sensitive identity, force LIVE_FRESH behavior.
+# ----------------------------
+_FRESHNESS_PATTERNS = [
+    r"\bwho\s+is\s+the\s+(current\s+)?(president|prime\s+minister|pm|ceo|chancellor|governor|mayor|king|queen|leader)\b",
+    r"\bwho\s+is\s+(the\s+)?(president|prime\s+minister|pm|ceo|chancellor|governor|mayor)\s+of\b",
+    r"\bcurrent\s+(president|prime\s+minister|pm|ceo|chancellor|governor|mayor)\b",
+    r"\b(as\s+of\s+today|today|right\s+now|currently|latest|most\s+recent|this\s+week|this\s+month)\b",
+    r"\b(election\s+results?|won\s+the\s+election|in\s+office|took\s+office|resigned|appointed)\b",
+]
+_FRESHNESS_RE = re.compile("|".join(_FRESHNESS_PATTERNS), re.IGNORECASE)
+
+def _freshness_required(query: str, features: Dict[str, bool]) -> bool:
+    if _FRESHNESS_RE.search(query or ""):
+        return True
+    # also honor your existing pre-router freshness
+    if features.get("freshness", False):
+        return True
+    return False
+
 
 def _is_rate_limit_error(err: Exception) -> bool:
     msg = str(err).lower()
@@ -332,6 +364,8 @@ def _needs_escalation(intent: str, answer: str, features: Dict[str, bool]) -> bo
     if not answer or len(answer.strip()) < 40:
         return True
 
+    # NEW: if the query is freshness-required, treat cutoff disclaimers as refusal
+    # (prevents stale "as of my last knowledge update" reaching UI)
     if intent == "LIVE_FRESH" and _looks_like_refusal(answer):
         return True
 
@@ -378,6 +412,11 @@ async def run_pipeline(
     query_uuid = uuid.uuid4()
 
     features = extract_features(query)
+
+    # NEW: promote office-holder/time-sensitive queries into freshness path even if keywords missed
+    if _freshness_required(query, features):
+        features["freshness"] = True  # helps pre_route + downstream behavior
+
     pre = pre_route(features, query)
 
     db = get_session()
@@ -485,8 +524,6 @@ async def run_pipeline(
     # ----------------------------
     # CHEAP PATH (default): single call + escalation only if needed
     # ----------------------------
-    # We do NOT multi-call unless the user explicitly requested compare.
-    # Even for LIVE_FRESH / CITATIONS, we do single-call first, then fallback on refusal/missing cites.
     force_single = _force_single_call(intent)
     if force_single or not compare:
         provider_primary = _cheap_primary_for_intent(intent, plan)
@@ -585,7 +622,9 @@ async def run_pipeline(
     fallbacks = _fallback_chain_for_intent(intent, plan)
 
     # For LIVE_FRESH compare, only allow Perplexity/Grok/Gemini
-    pool = [provider_primary, provider_secondary] + [p for p in fallbacks if p not in (provider_primary, provider_secondary)]
+    pool = [provider_primary, provider_secondary] + [
+        p for p in fallbacks if p not in (provider_primary, provider_secondary)
+    ]
     if intent == "LIVE_FRESH":
         pool = [p for p in pool if p in ("PERPLEXITY", "GROK", "GEMINI")]
 
@@ -637,7 +676,6 @@ async def run_pipeline(
     else:
         ranked = None
         ranker_meta = None
-        # Simple choose: prefer A if present, else B, else apology
         final_answer = ans_a or ans_b or "Sorry — I couldn't produce an answer."
         provider_used = a_provider if ans_a else (b_provider if ans_b else "NONE")
 

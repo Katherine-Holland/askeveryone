@@ -3,29 +3,18 @@
 :root {
   color-scheme: light;
 
-  /* Base theme */
-  --background: #faf7f2; /* seekle.cream */
-  --foreground: #18181b; /* seekle.text */
-
-  /* Brand */
-  --seekle-brown: #6f6660;
-  --seekle-brown-hover: #362b25;
+  /* Base theme (used by non-tailwind CSS bits) */
+  --background: #faf7f2;
+  --foreground: #18181b;
 
   /* UI */
   --surface: #ffffff;
   --surface-muted: #f6f1e8;
   --border: #e4e4e7;
-}
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-
-  --color-seekle-brown: var(--seekle-brown);
-  --color-seekle-brown-hover: var(--seekle-brown-hover);
-
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Brand (optional vars; Tailwind config is primary source of truth) */
+  --seekle-brown: #6b4f3c;
+  --seekle-brown-hover: #5b3f2f;
 }
 
 body {

@@ -1,7 +1,7 @@
 import re
 from typing import Dict, Any, List
 
-FRESHNESS = ["today","latest","breaking","right now","now","current","this week","just announced","as of","price","stock","who won","still"]
+FRESHNESS = ["today","what's happening","latest","breaking","right now", "who is","now","current","this week","just announced","as of","price","stock","who won","still"]
 CITATIONS = ["sources","cite","citation","links","reference","according to","evidence","study","paper","journal","references"]
 LOCAL = ["near me","closest","open now","directions","postcode","zip","within","miles","km","in london","in manchester"]
 HOWTO = ["how do i","how to","steps","guide","tutorial","setup","install","configure","fix","troubleshoot"]

@@ -111,6 +111,20 @@ async function isLoggedIn(seekleSessionId: string): Promise<boolean> {
   }
 }
 
+// Citation shape (backend returns list of {title,url,date})
+type Citation = {
+  title?: string;
+  url?: string;
+  date?: string;
+};
+
+function safeCitations(resp: AskResponse | null): Citation[] {
+  if (!resp) return [];
+  const anyResp = resp as any;
+  if (!Array.isArray(anyResp.citations)) return [];
+  return anyResp.citations as Citation[];
+}
+
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [sessionId, setSessionId] = useState<string>("");
@@ -133,6 +147,9 @@ export default function Home() {
 
   // “thought” animation trigger
   const [thoughtKey, setThoughtKey] = useState(0);
+
+  // Sources toggle (collapsible)
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   // Sidebar state
   const [showSidebar, setShowSidebar] = useState(false);
@@ -170,6 +187,11 @@ export default function Home() {
       }
     })();
   }, []);
+
+  // auto-close sources on new response/thread
+  useEffect(() => {
+    setSourcesOpen(false);
+  }, [thoughtKey, activeThreadId]);
 
   const rippleMode = useMemo(() => {
     if (loading) return "thinking";
@@ -308,12 +330,15 @@ export default function Home() {
       }`
     : undefined;
 
+  const citations = safeCitations(resp);
+  const sourcesCount = Math.min(citations.length, 8);
+
   return (
     <main className="min-h-screen bg-seekle-cream text-seekle-text">
       {/* Toast */}
       {toast ? (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50">
-          <div className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-zinc-700 shadow-sm">
+          <div className="rounded-full border border-seekle-border bg-white px-4 py-2 text-sm text-zinc-700 shadow-sm">
             {toast}
           </div>
         </div>
@@ -407,7 +432,7 @@ export default function Home() {
                         type="button"
                         onClick={() => void runAsk()}
                         disabled={loading || !query.trim() || !sessionId}
-                        className="rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brown-hover disabled:opacity-50 min-h-[52px]"
+                        className="rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50 min-h-[52px]"
                       >
                         {loading ? "Asking" : "Ask"}
                       </button>
@@ -431,9 +456,71 @@ export default function Home() {
                         <div className="text-xs text-zinc-500 mb-2">
                           Provider: {resp.provider_used} · Intent: {resp.intent}
                         </div>
+
                         <div className="whitespace-pre-wrap leading-7">
                           {resp.answer}
                         </div>
+
+                        {/* Sources (collapsible) */}
+                        {sourcesCount > 0 ? (
+                          <div className="mt-5">
+                            <button
+                              type="button"
+                              onClick={() => setSourcesOpen((v) => !v)}
+                              className="w-full flex items-center justify-between rounded-xl border border-seekle-border bg-seekle-muted px-3 py-2 hover:bg-white transition-colors"
+                              aria-expanded={sourcesOpen}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium text-seekle-brown">
+                                  Sources ({sourcesCount})
+                                </span>
+                                <span className="text-[11px] text-zinc-500">
+                                  {sourcesOpen ? "Hide" : "Show"}
+                                </span>
+                              </div>
+
+                              <span className="text-seekle-brown text-sm">
+                                {sourcesOpen ? "▾" : "▸"}
+                              </span>
+                            </button>
+
+                            {sourcesOpen ? (
+                              <div className="mt-2 space-y-2">
+                                {citations.slice(0, 8).map((c, idx) => {
+                                  const title = (
+                                    c?.title ||
+                                    c?.url ||
+                                    "Source"
+                                  ).toString();
+                                  const url = (c?.url || "").toString();
+                                  const date = (c?.date || "").toString();
+
+                                  return (
+                                    <a
+                                      key={`${url}-${idx}`}
+                                      href={url || "#"}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="block rounded-xl border border-seekle-border bg-white px-3 py-2 hover:bg-seekle-muted transition-colors"
+                                    >
+                                      <div className="text-sm text-seekle-text line-clamp-2">
+                                        {idx + 1}. {title}
+                                      </div>
+                                      <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-zinc-500">
+                                        {date ? <span>{date}</span> : null}
+                                        {url ? (
+                                          <span className="truncate max-w-[520px] underline underline-offset-2">
+                                            {url}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

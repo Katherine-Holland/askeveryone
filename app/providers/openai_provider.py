@@ -61,16 +61,27 @@ class OpenAIProvider(BaseProvider):
             raise ProviderError("OPENAI_API_KEY not set")
 
         today = meta.get("today_utc", "unknown")
+        want_citations = bool(meta.get("features", {}).get("citations", False)) or (intent == "WEB_RESEARCH_CITATIONS")
 
-        system_prompt = (
-            "You are SEEKLE. Answer the user clearly and helpfully.\n"
-            f"Today's date (UTC) is {today}. "
-            "If the user asks for today's date or the current day, use this value. "
-            "If you are unsure, say you are not sure rather than guessing.\n"
-            "For follow-up questions, infer missing context from the conversation.\n"
-            "Do not ask unnecessary clarification questions if the context is already present.\n"
-            "If the user changes topic, follow the new topic.\n"
-        )
+        # Important: OpenAI should not be used as the primary for LIVE_FRESH in your orchestrator,
+        # but if it is ever called, it should not emit "knowledge cutoff" boilerplate.
+        system_lines = [
+            "You are SEEKLE. Answer the user clearly and helpfully.",
+            f"Today's date (UTC) is {today}. If the user asks for today's date or the current day, use this value.",
+            "For follow-up questions, infer missing context from the conversation.",
+            "Do not ask unnecessary clarification questions if the context is already present.",
+            "If the user changes topic, follow the new topic.",
+            "Do NOT say 'As of my last knowledge update' or mention a training cutoff.",
+            "If you cannot verify a time-sensitive fact from the provided context, say you can't verify it right now.",
+        ]
+
+        if intent in ("LIVE_FRESH", "WEB_RESEARCH_CITATIONS") or want_citations:
+            system_lines += [
+                "If the user requests citations (or the intent implies it), include sources/links when you can.",
+                "If you do not have sources in the provided context, do not invent them.",
+            ]
+
+        system_prompt = "\n".join(system_lines) + "\n"
 
         orch_system = self._extract_orchestrator_system(meta)
         if orch_system:
