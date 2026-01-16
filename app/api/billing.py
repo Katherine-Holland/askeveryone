@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import Optional, Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request, Body
 from sqlalchemy import text
@@ -14,6 +14,9 @@ from app.db import billing_repo
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
+# ============================
+# Helpers
+# ============================
 def _normalize_plan(plan: str) -> str:
     p = (plan or "").lower().strip()
     if p in ("starter", "plus", "power"):
@@ -55,9 +58,68 @@ def _get_stripe_customer_id(db, user_id):
     return row[0] if row and row[0] else None
 
 
-# ----------------------------
-# Diagnostics (helps a LOT)
-# ----------------------------
+def _safe_get_subscription_fields(sub_obj: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pulls fields that help UI show "cancels on <date>".
+    Stripe returns unix timestamps for period_end.
+    """
+    cancel_at_period_end = bool(sub_obj.get("cancel_at_period_end") or False)
+    current_period_end = sub_obj.get("current_period_end")  # unix seconds or None
+    status = (sub_obj.get("status") or "").lower().strip()
+    return {
+        "cancel_at_period_end": cancel_at_period_end,
+        "current_period_end": current_period_end,
+        "subscription_status": status,
+    }
+
+
+def _maybe_store_cancel_schedule(db, user_id, cancel_at_period_end: bool, current_period_end: Optional[int]):
+    """
+    Optional storage hook.
+
+    ✅ If your DB has these columns on users:
+      users.cancel_at_period_end BOOLEAN
+      users.current_period_end BIGINT (unix seconds)
+
+    then this will persist them.
+
+    If you DON'T have them yet, this function safely no-ops.
+    """
+    try:
+        db.execute(
+            text(
+                "update users set cancel_at_period_end=:c, current_period_end=:e where user_id=:uid"
+            ),
+            {"c": cancel_at_period_end, "e": current_period_end, "uid": user_id},
+        )
+        db.commit()
+    except Exception:
+        # schema might not have these columns yet -> no-op
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _read_cancel_schedule(db, user_id) -> Dict[str, Any]:
+    """
+    Reads cancel schedule if your DB has the columns. If not, returns nulls.
+    """
+    try:
+        row = db.execute(
+            text("select cancel_at_period_end, current_period_end from users where user_id=:uid"),
+            {"uid": user_id},
+        ).fetchone()
+        if not row:
+            return {"cancel_at_period_end": None, "current_period_end": None}
+        return {"cancel_at_period_end": row[0], "current_period_end": row[1]}
+    except Exception:
+        return {"cancel_at_period_end": None, "current_period_end": None}
+
+
+# ============================
+# Diagnostics
+# ============================
 @router.get("/diagnostics/stripe")
 async def stripe_diagnostics():
     """
@@ -76,13 +138,13 @@ async def stripe_diagnostics():
             "plus": settings.stripe_price_plus,
             "power": settings.stripe_price_power,
         },
-        "frontend_base_url": settings.frontend_base_url,
+        "frontend_base_url": getattr(settings, "frontend_base_url", None),
     }
 
 
-# ----------------------------
-# Status
-# ----------------------------
+# ============================
+# Status (used by frontend for sidebar + credits badge)
+# ============================
 @router.get("/status")
 async def billing_status(session_id: str):
     db = None
@@ -105,22 +167,28 @@ async def billing_status(session_id: str):
         except Exception:
             tier = None
 
+        # ✅ Optional: surface cancel schedule for UI (if DB columns exist)
+        cancel_sched = _read_cancel_schedule(db, user_id)
+
         return {
             "ok": True,
             "user_id": str(user_id),
             "plan": plan,  # free|paid
             "tier": tier,  # starter|plus|power|null
             "credits_balance": bal,
+            # UI hint: show “Cancels on …” if cancel_at_period_end is true
+            "cancel_at_period_end": cancel_sched.get("cancel_at_period_end"),
+            "current_period_end": cancel_sched.get("current_period_end"),
         }
     finally:
         if db:
             db.close()
 
 
-# ----------------------------
+# ============================
 # Start billing (upgrade-first)
 # Frontend calls POST /api/billing/start with { session_id, email }
-# ----------------------------
+# ============================
 @router.post("/start")
 async def billing_start(payload: dict = Body(...)):
     """
@@ -179,9 +247,9 @@ async def billing_start(payload: dict = Body(...)):
             db.close()
 
 
-# ----------------------------
+# ============================
 # Checkout
-# ----------------------------
+# ============================
 @router.post("/checkout")
 async def create_checkout(session_id: str, plan: str):
     """
@@ -230,6 +298,7 @@ async def create_checkout(session_id: str, plan: str):
         if not stripe_customer_id:
             stripe_customer_id = _create_and_store_customer()
         else:
+            # If stored customer id belongs to the other mode (test vs live), this will fail.
             try:
                 stripe.Customer.retrieve(stripe_customer_id)
             except Exception:
@@ -259,9 +328,9 @@ async def create_checkout(session_id: str, plan: str):
             db.close()
 
 
-# ----------------------------
-# ✅ Stripe Customer Portal (Manage plan / cancel / update card)
-# ----------------------------
+# ============================
+# Stripe Customer Portal (Manage plan / cancel / update card)
+# ============================
 @router.post("/portal")
 async def billing_portal(session_id: str):
     """
@@ -302,15 +371,14 @@ async def billing_portal(session_id: str):
             db.close()
 
 
-# ----------------------------
+# ============================
 # (Optional) Simple cancel endpoint
-# If you add a UI button, this can cancel at period end.
-# ----------------------------
+# Prefer the Portal for most cases.
+# ============================
 @router.post("/cancel")
 async def billing_cancel(session_id: str):
     """
     Cancels the active subscription at period end (keeps access until end of cycle).
-    Prefer using the Portal in most cases.
     """
     if not settings.stripe_secret_key:
         raise HTTPException(status_code=500, detail="STRIPE_SECRET_KEY not set")
@@ -328,32 +396,46 @@ async def billing_cancel(session_id: str):
         import stripe  # type: ignore
         stripe.api_key = settings.stripe_secret_key
 
-        # Try to find the subscription via Stripe customer (most reliable)
         stripe_customer_id = _get_stripe_customer_id(db, user_id)
         if not stripe_customer_id:
             raise HTTPException(status_code=400, detail="No Stripe customer found")
 
         subs = stripe.Subscription.list(customer=stripe_customer_id, status="all", limit=5)
-        sub_id = None
+        sub_obj = None
         for s in (subs.get("data") or []):
             st = (s.get("status") or "").lower()
             if st in ("active", "trialing", "past_due"):
-                sub_id = s.get("id")
+                sub_obj = s
                 break
 
-        if not sub_id:
+        if not sub_obj:
             return {"ok": True, "note": "no_active_subscription"}
 
-        stripe.Subscription.modify(sub_id, cancel_at_period_end=True)
-        return {"ok": True, "cancel_at_period_end": True, "subscription_id": sub_id}
+        sub_id = sub_obj.get("id")
+        updated = stripe.Subscription.modify(sub_id, cancel_at_period_end=True)
+
+        fields = _safe_get_subscription_fields(updated)
+        _maybe_store_cancel_schedule(
+            db,
+            user_id,
+            fields["cancel_at_period_end"],
+            fields["current_period_end"],
+        )
+
+        return {
+            "ok": True,
+            "cancel_at_period_end": True,
+            "subscription_id": sub_id,
+            "current_period_end": fields["current_period_end"],
+        }
     finally:
         if db:
             db.close()
 
 
-# ----------------------------
+# ============================
 # Stripe Webhook
-# ----------------------------
+# ============================
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
     """
@@ -362,7 +444,7 @@ async def stripe_webhook(request: Request):
     - customer.subscription.updated/deleted -> keep plan accurate
 
     IMPORTANT:
-    We *fail-open* on stripe_events logging so Stripe doesn't retry forever due to schema mismatch.
+    We fail-open on stripe_events logging so Stripe doesn't retry forever due to schema mismatch.
     """
     if not settings.stripe_webhook_secret:
         raise HTTPException(status_code=500, detail="STRIPE_WEBHOOK_SECRET not set")
@@ -406,7 +488,7 @@ async def stripe_webhook(request: Request):
         if exists:
             return {"ok": True, "skipped": True}
 
-        # ✅ Safe event logging (fail-open)
+        # Safe event logging (fail-open)
         raw = payload.decode("utf-8")[:5000]
         try:
             db.execute(
@@ -433,6 +515,9 @@ async def stripe_webhook(request: Request):
             ).fetchone()
             return row[0] if row and row[0] else None
 
+        # -----------------------------
+        # checkout.session.completed
+        # -----------------------------
         if event_type == "checkout.session.completed":
             session = event["data"]["object"]
             md = session.get("metadata") or {}
@@ -469,6 +554,19 @@ async def stripe_webhook(request: Request):
                     except Exception:
                         pass
 
+                # Try to fetch subscription to capture cancel schedule fields (usually false initially)
+                try:
+                    sub = stripe.Subscription.retrieve(sub_id)
+                    fields = _safe_get_subscription_fields(sub)
+                    _maybe_store_cancel_schedule(
+                        db,
+                        user_id,
+                        fields["cancel_at_period_end"],
+                        fields["current_period_end"],
+                    )
+                except Exception:
+                    pass
+
                 return {
                     "ok": True,
                     "event": event_type,
@@ -480,6 +578,9 @@ async def stripe_webhook(request: Request):
 
             return {"ok": True, "event": event_type, "note": "no subscription on session"}
 
+        # -----------------------------
+        # subscription lifecycle
+        # -----------------------------
         if event_type in (
             "customer.subscription.created",
             "customer.subscription.updated",
@@ -495,6 +596,15 @@ async def stripe_webhook(request: Request):
             user_id = _user_id_from_customer(customer_id)
             if not user_id:
                 return {"ok": True, "ignored": "unknown_customer"}
+
+            # ✅ store cancel schedule flags if schema supports it
+            fields = _safe_get_subscription_fields(sub)
+            _maybe_store_cancel_schedule(
+                db,
+                user_id,
+                fields["cancel_at_period_end"],
+                fields["current_period_end"],
+            )
 
             is_active = status in ("active", "trialing")
 
@@ -520,8 +630,11 @@ async def stripe_webhook(request: Request):
                     "status": status,
                     "plan": "paid",
                     "tier": existing_tier,
+                    "cancel_at_period_end": fields["cancel_at_period_end"],
+                    "current_period_end": fields["current_period_end"],
                 }
 
+            # Not active -> free + clear tier
             try:
                 billing_repo.set_user_plan_and_tier(db, user_id, "free", None)
             except Exception:
@@ -529,6 +642,9 @@ async def stripe_webhook(request: Request):
                     billing_repo.set_user_plan(db, user_id, "free")
                 except Exception:
                     pass
+
+            # if schema supports it, clear schedule info too
+            _maybe_store_cancel_schedule(db, user_id, False, None)
 
             return {
                 "ok": True,
