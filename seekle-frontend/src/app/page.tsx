@@ -391,7 +391,7 @@ export default function Home() {
                     </h1>
                     <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
                   </div>
-
+/*
                   {/* Input halo wrapper */}
                   <div
                     className="seekle-input-wrap"
