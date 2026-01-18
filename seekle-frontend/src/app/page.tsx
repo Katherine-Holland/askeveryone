@@ -405,7 +405,7 @@ export default function Home() {
                         <textarea
                           value={query}
                           onChange={(e) => setQuery(e.target.value)}
-                          placeholder="Ask or type..."
+                          placeholder="type your query here..."
                           rows={1}
                           className="w-full resize-none rounded-2xl border border-seekle-border bg-white px-5 py-3 pr-12 text-base outline-none leading-6 min-h-[52px] max-h-[180px] overflow-y-auto"
                           onKeyDown={(e) => {
@@ -432,7 +432,7 @@ export default function Home() {
                         type="button"
                         onClick={() => void runAsk()}
                         disabled={loading || !query.trim() || !sessionId}
-                        className="rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50 min-h-[52px]"
+                        className="rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brown-hover disabled:opacity-50 min-h-[52px]"
                       >
                         {loading ? "Asking" : "Ask"}
                       </button>
