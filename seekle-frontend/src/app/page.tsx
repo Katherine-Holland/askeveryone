@@ -432,7 +432,7 @@ export default function Home() {
                         type="button"
                         onClick={() => void runAsk()}
                         disabled={loading || !query.trim() || !sessionId}
-                        className="rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brown-hover disabled:opacity-50 min-h-[52px]"
+                        className="rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brown-Hover disabled:opacity-50 min-h-[52px]"
                       >
                         {loading ? "Asking" : "Ask"}
                       </button>

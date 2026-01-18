@@ -13,8 +13,8 @@
   --border: #e4e4e7;
 
   /* Brand (optional vars; Tailwind config is primary source of truth) */
-  --seekle-brown: #6b4f3c;
-  --seekle-brown-hover: #5b3f2f;
+  --color-seekle-brown: #6b4f3c;
+  --color-seekle-brown-hover: #5b3f2f;
 }
 
 body {
