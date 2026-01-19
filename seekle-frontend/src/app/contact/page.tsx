@@ -4,7 +4,7 @@ export const metadata = {
 };
 
 export default function ContactPage() {
-  const email = "support@seekle.ai";
+  const email = "support@seekle.io";
 
   return (
     <main
@@ -56,6 +56,14 @@ export default function ContactPage() {
           Seekle is intended for users aged <strong>18 or older</strong>.
         </p>
       </div>
+      <div className="mt-10 text-xs text-zinc-500">
+          <a
+            href="/"
+            className="underline underline-offset-2 hover:text-zinc-700"
+          >
+            ← Back to Seekle
+          </a>
+        </div>
     </main>
   );
 }

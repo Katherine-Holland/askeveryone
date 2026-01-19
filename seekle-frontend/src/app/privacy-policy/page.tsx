@@ -128,7 +128,7 @@ export default function PrivacyPolicyPage() {
           <li>Request data portability</li>
         </ul>
         <p>
-          To exercise these rights, contact: <a href="mailto:support@seekle.ai">support@seekle.ai</a>
+          To exercise these rights, contact: <a href="mailto:support@seekle.io">support@seekle.io</a>
         </p>
       </section>
 
@@ -160,7 +160,7 @@ export default function PrivacyPolicyPage() {
         <h2>13. Contact</h2>
         <p>
           For privacy-related questions or requests, contact:{" "}
-          <a href="mailto:support@seekle.ai">support@seekle.ai</a>
+          <a href="mailto:support@seekle.io">support@seekle.io</a>
         </p>
       </section>
     </main>

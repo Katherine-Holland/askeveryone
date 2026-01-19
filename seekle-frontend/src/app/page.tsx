@@ -225,7 +225,7 @@ export default function Home() {
     const q = query.trim();
     if (!q || loading) return;
 
-    // ✅ should never be empty now, but keep a safe guard
+    // should never be empty now, but keep a safe guard
     if (!sessionId) {
       const sid = getOrCreateSessionId();
       if (!sid) return;
