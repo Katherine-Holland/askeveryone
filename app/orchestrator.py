@@ -369,29 +369,14 @@ def _secondary_token_budget(intent: str, primary_budget: int) -> int:
     return SECONDARY_MAX_TOKENS_DEFAULT
 
 def _needs_escalation(intent: str, answer: str, features: Dict[str, bool]) -> bool:
-    """
-    Escalate only when:
-    - refusal/stall detected (esp. LIVE_FRESH)
-    - citations asked, but answer lacks obvious citations
-    - too short / looks truncated (except GENERAL_CHAT)
-    - coding tech and answer looks incomplete
-    """
     if not answer:
         return True
 
-    # ✅ Allow short answers for greetings / casual chat
-    if intent == "GENERAL_CHAT":
-        # still treat clear refusal/stall as escalation
-        return _looks_like_refusal(answer)
-
-    # For other intents, keep the minimum length guard
-    if len(answer.strip()) < 40:
-        return True
-
-    # If the query is freshness-required, treat cutoff disclaimers as refusal
+    # Only escalate on explicit refusal/stall for LIVE_FRESH (and optionally any intent)
     if intent == "LIVE_FRESH" and _looks_like_refusal(answer):
         return True
 
+    # If citations were requested, enforce citation-like markers
     if intent == "WEB_RESEARCH_CITATIONS" or features.get("citations", False):
         al = answer.lower()
         has_url = ("http://" in al) or ("https://" in al) or ("www." in al)
@@ -405,7 +390,7 @@ def _needs_escalation(intent: str, answer: str, features: Dict[str, bool]) -> bo
         return True
 
     return False
-    
+
 
 def _should_run_ranker(compare: bool, ans_a: str, ans_b: str) -> bool:
     # Only run ranker if user explicitly asked compare AND both are non-trivial and not refusal-like
