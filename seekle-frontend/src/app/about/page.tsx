@@ -1,6 +1,35 @@
 // src/app/about/page.tsx
 import type { Metadata } from "next";
 
+function BreadcrumbJsonLd() {
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "Home",
+        item: "https://seekle.io/",
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "About",
+        item: "https://seekle.io/about",
+      },
+    ],
+  };
+
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+    />
+  );
+}
+
+
 export const metadata: Metadata = {
   title: "About Seekle | Ask Everyone",
   description:
@@ -80,6 +109,7 @@ function FAQJsonLd() {
 export default function AboutPage() {
   return (
     <main className="min-h-screen bg-seekle-cream text-seekle-text">
+      <BreadcrumbJsonLd />
       <FAQJsonLd />
 
       <div className="mx-auto max-w-4xl px-6 py-14">
