@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/ai.json",
+  "name": "Seekle",
+  "description": "Seekle is an Answer Engine Optimization (AEO) platform that queries multiple AI and search providers to return a single, cited answer.",
+  "url": "https://seekle.io",
+  "logo": "https://seekle.io/icon.png",
+  "contact": {
+    "email": "support@seekle.io",
+    "url": "https://seekle.io/contact"
+  },
+  "publisher": {
+    "name": "Seekle",
+    "url": "https://seekle.io"
+  },
+  "capabilities": {
+    "answer_generation": true,
+    "citations": true,
+    "multi_source_querying": true,
+    "search_aggregation": true
+  },
+  "intended_use": [
+    "Answer engine optimization",
+    "Research assistance",
+    "AI-powered search",
+    "Content discovery"
+  ],
+  "data_usage": {
+    "stores_personal_data": false,
+    "uses_tracking": false,
+    "trains_models": false
+  },
+  "ai_policy": "https://seekle.io/ai-policy",
+  "terms_of_service": "https://seekle.io/terms",
+  "privacy_policy": "https://seekle.io/privacy",
+  "last_updated": "2024-01-01"
+}

@@ -1,0 +1,56 @@
+{
+  "name": "Seekle",
+  "tagline": "Ask Everyone.",
+  "description": "Seekle is an Answer Engine Optimization (AEO) platform that queries multiple AI and search providers to return a single best answer with citations.",
+  "website": "https://seekle.io",
+  "type": "AEO Platform",
+  "version": "1.0",
+  "language": "en",
+  "region": "global",
+
+  "capabilities": [
+    "Multi-model querying",
+    "Answer synthesis",
+    "Source citation",
+    "AEO optimization",
+    "Search intent classification"
+  ],
+
+  "models_used": [
+    "OpenAI",
+    "Perplexity",
+    "Claude",
+    "Gemini",
+    "Grok"
+  ],
+
+  "pricing": {
+    "starter": {
+      "credits": 200,
+      "price_gbp": 6,
+      "description": "1 credit = 1 search"
+    }
+  },
+
+  "compliance": {
+    "gdpr": true,
+    "ai_policy": "https://seekle.io/ai-policy",
+    "privacy": "https://seekle.io/privacy",
+    "terms": "https://seekle.io/terms"
+  },
+
+  "contact": {
+    "email": "support@seekle.io",
+    "page": "https://seekle.io/contact"
+  },
+
+  "structured_for": [
+    "Search engines",
+    "AI crawlers",
+    "Answer engines",
+    "LLM indexing",
+    "AEO systems"
+  ],
+
+  "last_updated": "2026-01-19"
+}

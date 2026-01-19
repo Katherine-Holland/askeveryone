@@ -4,14 +4,14 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://seekle.io";
   const now = new Date();
 
-  // Add your public pages here
   const routes = [
     "",
     "/about",
     "/contact",
     "/terms",
-    "/privacy-policy",
+    "/privacy",
     "/ai-policy",
+    "/.well-known/ai.json"
   ];
 
   return routes.map((path) => ({
@@ -21,3 +21,4 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: path === "" ? 1 : 0.6,
   }));
 }
+
