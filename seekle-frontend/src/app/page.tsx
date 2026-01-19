@@ -570,8 +570,8 @@ export default function Home() {
                   />
 
                   <div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-zinc-500">
-                    <a className="hover:text-zinc-700" href="/privacy">
-                      Privacy
+                    <a className="hover:text-zinc-700" href="/privacy-policy">
+                      Privacy Policy
                     </a>
                     <a className="hover:text-zinc-700" href="/terms">
                       Terms
