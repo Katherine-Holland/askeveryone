@@ -125,6 +125,14 @@ export default function TermsOfServicePage() {
         For questions about these Terms, contact us at{" "}
         <a href="mailto:support@seekle.io">support@seekle.io</a>.
       </p>
+      <div className="mt-10 text-xs text-zinc-500">
+          <a
+            href="/"
+            className="underline underline-offset-2 hover:text-zinc-700"
+          >
+            ← Back to Seekle
+          </a>
+        </div>
     </main>
   );
 }
