@@ -4,8 +4,8 @@ export const metadata = {
 };
 
 export default function PrivacyPolicyPage() {
-  const effectiveDate = "[Insert Date]";
-  const lastUpdated = "[Insert Date]";
+  const effectiveDate = "Jan 2026";
+  const lastUpdated = "Jan 2026";
 
   return (
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "48px 20px", lineHeight: 1.65 }}>

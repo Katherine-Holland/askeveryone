@@ -19,7 +19,7 @@ export default function TermsOfServicePage() {
       </h1>
 
       <p>
-        <strong>Effective Date:</strong> [Insert Date]
+        <strong>Effective Date:</strong> [Jan 2026]
       </p>
 
       <p>
