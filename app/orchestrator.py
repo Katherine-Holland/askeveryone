@@ -373,19 +373,26 @@ def _needs_escalation(intent: str, answer: str, features: Dict[str, bool]) -> bo
     Escalate only when:
     - refusal/stall detected (esp. LIVE_FRESH)
     - citations asked, but answer lacks obvious citations
-    - too short / looks truncated
+    - too short / looks truncated (except GENERAL_CHAT)
     - coding tech and answer looks incomplete
     """
-    if not answer or len(answer.strip()) < 40:
+    if not answer:
         return True
 
-    # NEW: if the query is freshness-required, treat cutoff disclaimers as refusal
-    # (prevents stale "as of my last knowledge update" reaching UI)
+    # ✅ Allow short answers for greetings / casual chat
+    if intent == "GENERAL_CHAT":
+        # still treat clear refusal/stall as escalation
+        return _looks_like_refusal(answer)
+
+    # For other intents, keep the minimum length guard
+    if len(answer.strip()) < 40:
+        return True
+
+    # If the query is freshness-required, treat cutoff disclaimers as refusal
     if intent == "LIVE_FRESH" and _looks_like_refusal(answer):
         return True
 
     if intent == "WEB_RESEARCH_CITATIONS" or features.get("citations", False):
-        # heuristic: if no URLs and no bracketed citations and no "Source"
         al = answer.lower()
         has_url = ("http://" in al) or ("https://" in al) or ("www." in al)
         has_bracket_cites = bool(re.search(r"\[\d+\]", answer))
@@ -393,11 +400,12 @@ def _needs_escalation(intent: str, answer: str, features: Dict[str, bool]) -> bo
         if not (has_url or has_bracket_cites or has_source_word):
             return True
 
-    # if answer ends abruptly (common truncation signal)
+    # Truncation signal
     if answer.strip().endswith(("...", "…")):
         return True
 
     return False
+    
 
 def _should_run_ranker(compare: bool, ans_a: str, ans_b: str) -> bool:
     # Only run ranker if user explicitly asked compare AND both are non-trivial and not refusal-like
