@@ -42,7 +42,7 @@ body {
   position: relative;
 }
 
-/*.seekle-input-glow {
+.seekle-input-glow {
   position: absolute;
   inset: -10px;
   border-radius: 9999px;
@@ -61,7 +61,7 @@ body {
 .seekle-input-wrap:focus-within .seekle-input-glow,
 .seekle-input-wrap[data-loading="true"] .seekle-input-glow {
   opacity: 1;
-} */
+} 
 
 @keyframes seekle-sheen {
   10% { opacity: 0.0; transform: translateX(-12%); }

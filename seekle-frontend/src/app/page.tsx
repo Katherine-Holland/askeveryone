@@ -391,16 +391,12 @@ export default function Home() {
                     </h1>
                     <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
                   </div>
-/*
                   {/* Input halo wrapper */}
-                  <div
-                    className="seekle-input-wrap"
-                    data-loading={loading ? "true" : "false"}
-                  >
+                  <div className="seekle-input-wrap" data-loading={loading ? "true" : "false"}>
                     <div className="seekle-input-glow" />
                     <div className="seekle-input-sheen" />
 
-                    <div className="flex gap-2 items-end relative">
+                    <div className="relative z-10 flex gap-2 items-end">
                       <div className="relative flex-1">
                         <textarea
                           value={query}
@@ -432,7 +428,7 @@ export default function Home() {
                         type="button"
                         onClick={() => void runAsk()}
                         disabled={loading || !query.trim() || !sessionId}
-                        className="rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brown-hover disabled:opacity-50 min-h-[52px]"
+                        className="relative z-20 rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50 min-h-[52px]"
                       >
                         {loading ? "Asking" : "Ask"}
                       </button>
