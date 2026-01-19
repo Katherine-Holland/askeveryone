@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+@theme {
+  --color-seekle-brown: #6b4f3c;
+  --color-seekle-brown-hover: #5b3f2f;
+}
+
 :root {
   color-scheme: light;
 
