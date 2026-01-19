@@ -14,8 +14,6 @@ from app.providers.perplexity_provider import PerplexityProvider
 from app.providers.grok_provider import GrokProvider
 from app.providers.claude_provider import ClaudeProvider
 from app.providers.gemini_provider import GeminiProvider
-from app.providers.huggingface_provider import HuggingFaceProvider
-from app.providers.llama_provider import LlamaProvider
 from app.providers.base import ProviderError
 
 from app.db.session import get_session
@@ -30,8 +28,6 @@ PROVIDERS = {
     "GROK": GrokProvider(),
     "CLAUDE": ClaudeProvider(),
     "GEMINI": GeminiProvider(),
-    "LLAMA": LlamaProvider(),
-    "HUGGINGFACE": HuggingFaceProvider(),
 }
 
 # ----------------------------
@@ -146,14 +142,30 @@ def _last_user_topic(conversation: List[Dict[str, str]]) -> str:
 def _extract_destination_like_phrase(text: str) -> str:
     if not text:
         return ""
-    m = re.search(r"(?:get to|to)\s+([A-Za-z0-9][A-Za-z0-9\-\s]{1,40})", text, re.IGNORECASE)
-    if m:
-        dest = m.group(1).strip()
-        dest = re.sub(r"\s+", " ", dest)
-        return dest[:60]
-    if re.search(r"\bmoon\b", text, re.IGNORECASE):
-        return "the Moon"
+
+    t = re.sub(r"\s+", " ", text.strip())
+
+    # Prefer explicit destination forms
+    patterns = [
+        r"(?:get to|go to|travel to|fly to|drive to|visit)\s+([A-Za-z0-9][A-Za-z0-9\-\s]{1,60})",
+        r"(?:in|at|near)\s+([A-Za-z0-9][A-Za-z0-9\-\s]{1,60})",
+        r"(?:about|regarding|on)\s+([A-Za-z0-9][A-Za-z0-9\-\s]{1,60})",
+    ]
+
+    for pat in patterns:
+        m = re.search(pat, t, re.IGNORECASE)
+        if m:
+            phrase = m.group(1).strip()
+            phrase = re.sub(r"\s+", " ", phrase)
+
+            # Trim obvious trailing punctuation / filler
+            phrase = re.sub(r"[.,;:!?]+$", "", phrase)
+            phrase = re.sub(r"\b(please|today|now)\b$", "", phrase, flags=re.IGNORECASE).strip()
+
+            return phrase[:60]
+
     return ""
+
 
 def _detect_followup(query: str) -> bool:
     q = (query or "").strip().lower()
