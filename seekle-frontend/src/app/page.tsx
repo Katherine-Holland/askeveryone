@@ -9,6 +9,10 @@ import ChatSidebar, { type SidebarItem } from "@/components/ChatSidebar";
 
 function getOrCreateSessionId(): string {
   const key = "seekle_session_id";
+
+  // ✅ guard for SSR/edge hydration
+  if (typeof window === "undefined") return "";
+
   const existing = localStorage.getItem(key);
   if (existing) return existing;
 
@@ -23,6 +27,9 @@ function getOrCreateSessionId(): string {
 
 function resetSessionId(): string {
   const key = "seekle_session_id";
+
+  if (typeof window === "undefined") return "";
+
   const id =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
@@ -69,6 +76,7 @@ const LS_ACTIVE = "seekle_threads_active_v1";
 
 function loadThreads(): SavedThread[] {
   try {
+    if (typeof window === "undefined") return [];
     const raw = localStorage.getItem(LS_THREADS);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
@@ -80,12 +88,14 @@ function loadThreads(): SavedThread[] {
 
 function saveThreads(threads: SavedThread[]) {
   try {
+    if (typeof window === "undefined") return;
     localStorage.setItem(LS_THREADS, JSON.stringify(threads.slice(0, 80)));
   } catch {}
 }
 
 function loadActiveId(): string | null {
   try {
+    if (typeof window === "undefined") return null;
     return localStorage.getItem(LS_ACTIVE);
   } catch {
     return null;
@@ -94,6 +104,7 @@ function loadActiveId(): string | null {
 
 function saveActiveId(id: string | null) {
   try {
+    if (typeof window === "undefined") return;
     if (!id) localStorage.removeItem(LS_ACTIVE);
     else localStorage.setItem(LS_ACTIVE, id);
   } catch {}
@@ -127,7 +138,9 @@ function safeCitations(resp: AskResponse | null): Citation[] {
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
-  const [sessionId, setSessionId] = useState<string>("");
+
+  // ✅ IMPORTANT: set sessionId immediately on first client render
+  const [sessionId, setSessionId] = useState<string>(() => getOrCreateSessionId());
 
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -158,9 +171,18 @@ export default function Home() {
 
   useEffect(() => {
     setMounted(true);
-    const sid = getOrCreateSessionId();
-    setSessionId(sid);
     if (process.env.NODE_ENV === "development") setDebug(false);
+
+    // if sessionId is still empty for any reason, repair it
+    if (!sessionId) {
+      const sid = getOrCreateSessionId();
+      if (sid) setSessionId(sid);
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    if (!sessionId) return;
 
     // hydrate sidebar storage
     const t = loadThreads();
@@ -170,11 +192,11 @@ export default function Home() {
 
     // decide if we show sidebar (logged-in only) + pull billing
     void (async () => {
-      const ok = await isLoggedIn(sid);
+      const ok = await isLoggedIn(sessionId);
       setShowSidebar(ok);
 
       if (ok) {
-        const st = await fetchBillingStatus(sid);
+        const st = await fetchBillingStatus(sessionId);
         setBilling(st);
       } else {
         setBilling(null);
@@ -186,7 +208,7 @@ export default function Home() {
         if (found) setResp(found.resp);
       }
     })();
-  }, []);
+  }, [mounted, sessionId]);
 
   // auto-close sources on new response/thread
   useEffect(() => {
@@ -201,7 +223,14 @@ export default function Home() {
 
   async function runAsk() {
     const q = query.trim();
-    if (!q || !sessionId || loading) return;
+    if (!q || loading) return;
+
+    // ✅ should never be empty now, but keep a safe guard
+    if (!sessionId) {
+      const sid = getOrCreateSessionId();
+      if (!sid) return;
+      setSessionId(sid);
+    }
 
     setLoading(true);
     setError(null);
@@ -391,8 +420,12 @@ export default function Home() {
                     </h1>
                     <p className="mt-3 text-sm text-zinc-600">Ask Everyone.</p>
                   </div>
+
                   {/* Input halo wrapper */}
-                  <div className="seekle-input-wrap" data-loading={loading ? "true" : "false"}>
+                  <div
+                    className="seekle-input-wrap"
+                    data-loading={loading ? "true" : "false"}
+                  >
                     <div className="seekle-input-glow" />
                     <div className="seekle-input-sheen" />
 
@@ -427,8 +460,9 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => void runAsk()}
-                        disabled={loading || !query.trim() || !sessionId}
-                        className="relative z-20 rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-50 min-h-[52px]"
+                        // ✅ do NOT gate on sessionId
+                        disabled={loading || !query.trim()}
+                        className="relative z-20 rounded-2xl px-5 py-3 border border-transparent bg-seekle-brown text-white hover:bg-seekle-brownHover disabled:opacity-60 disabled:hover:bg-seekle-brown min-h-[52px]"
                       >
                         {loading ? "Asking" : "Ask"}
                       </button>
@@ -483,11 +517,7 @@ export default function Home() {
                             {sourcesOpen ? (
                               <div className="mt-2 space-y-2">
                                 {citations.slice(0, 8).map((c, idx) => {
-                                  const title = (
-                                    c?.title ||
-                                    c?.url ||
-                                    "Source"
-                                  ).toString();
+                                  const title = (c?.title || c?.url || "Source").toString();
                                   const url = (c?.url || "").toString();
                                   const date = (c?.date || "").toString();
 
