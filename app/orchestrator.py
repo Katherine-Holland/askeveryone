@@ -337,7 +337,10 @@ def _fallback_chain_for_intent(intent: str, plan: Dict[str, Any]) -> List[str]:
     if intent == "CODING_TECH":
         # Use Claude as "repair/fallback", not default
         return ["CLAUDE"]
-    return plan.get("provider_fallbacks", []) or []
+
+    # NEW: safety net for common intents (fixes “first request fails”)
+    defaults = ["GEMINI", "PERPLEXITY"]  # pick whichever you actually have keys for
+    return plan.get("provider_fallbacks") or defaults
 
 def _primary_token_budget(intent: str, requested: int) -> int:
     requested = int(requested or PRIMARY_MAX_TOKENS_DEFAULT)
