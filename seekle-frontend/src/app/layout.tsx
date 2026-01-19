@@ -12,6 +12,20 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const orgJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: "Seekle",
+  url: "https://seekle.io",
+  logo: "https://seekle.io/icon.png",
+  description:
+    "Seekle is an AI-powered search and discovery platform that combines multiple LLMs into one interface.",
+  sameAs: [
+    "https://twitter.com/seekle",
+    "https://www.linkedin.com/company/seekleio"
+  ],
+};
+
 export const metadata: Metadata = {
   title: "Seekle — Ask Everyone",
   description: "Ask once. Get answers from everywhere.",
@@ -41,6 +55,7 @@ export const metadata: Metadata = {
     images: ["/og.png"],
   },
 };
+
 
 export default function RootLayout({
   children,
