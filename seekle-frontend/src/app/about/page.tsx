@@ -39,7 +39,7 @@ function FAQJsonLd() {
         name: "What does “Ask Everyone” mean?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "It means Seekle can route a question to more than one provider and select the strongest, most relevant response—so you’re not limited to a single model’s viewpoint or browsing capabilities.",
+          text: "It means Seekle can route a question to more than one provider and select the strongest, most relevant response—so you’re not limited to a single model’s viewpoint.",
         },
       },
       {
@@ -55,7 +55,7 @@ function FAQJsonLd() {
         name: "How does pricing work?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Seekle uses credits. In the Starter plan, 1 credit equals 1 search. Plans allocate a monthly credit balance you can use across queries.",
+          text: "Seekle uses credits. In the Starter plan, 1 credit equals 1 search. Plans allocate a monthly credit balance.",
         },
       },
       {
@@ -63,7 +63,7 @@ function FAQJsonLd() {
         name: "Is Seekle for SEO or AEO?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Seekle is built for AEO (Answer Engine Optimization): helping your brand show up in AI answers by making content easier for AI to understand, cite, and trust.",
+          text: "Seekle is built for AEO — helping content surface in AI-generated answers through clarity, structure, and citations.",
         },
       },
     ],
@@ -83,18 +83,32 @@ export default function AboutPage() {
       <FAQJsonLd />
 
       <div className="mx-auto max-w-4xl px-6 py-14">
+        {/* Back link */}
+        <div className="mb-6">
+          <a
+            href="/"
+            className="text-sm text-zinc-500 hover:text-zinc-700 underline underline-offset-2"
+          >
+            ← Back to Seekle
+          </a>
+        </div>
+
+        {/* Header */}
         <header className="text-center">
           <p className="text-xs tracking-widest text-zinc-500 uppercase">
             About Seekle
           </p>
-          <h1 className="mt-3 text-4xl sm:text-5xl font-semibold tracking-tight">
-            Ask Everyone.
+
+          {/* Smaller headline */}
+          <h1 className="mt-3 text-3xl sm:text-4xl font-semibold tracking-tight">
+            Ask Everyone
           </h1>
-          <p className="mt-4 text-base sm:text-lg text-zinc-600">
+
+          <p className="mt-4 text-base text-zinc-600">
             Seekle is an <strong>Answer Engine Optimization (AEO)</strong>{" "}
-            platform: we query multiple AI/search providers and return{" "}
+            platform that queries multiple AI systems and returns{" "}
             <strong>one clear answer</strong> with{" "}
-            <strong>sources you can verify</strong>.
+            <strong>verifiable sources</strong>.
           </p>
         </header>
 

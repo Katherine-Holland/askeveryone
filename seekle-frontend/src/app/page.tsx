@@ -434,7 +434,7 @@ export default function Home() {
                         <textarea
                           value={query}
                           onChange={(e) => setQuery(e.target.value)}
-                          placeholder="type your query here... Seekle asks ChatGPT, Perplexity, Claude, Gemini or Grok"
+                          placeholder="type here... Seekle asks ChatGPT, Perplexity, Claude, Gemini or Grok"
                           rows={1}
                           className="w-full resize-none rounded-2xl border border-seekle-border bg-white px-5 py-3 pr-12 text-base outline-none leading-6 min-h-[52px] max-h-[180px] overflow-y-auto"
                           onKeyDown={(e) => {
