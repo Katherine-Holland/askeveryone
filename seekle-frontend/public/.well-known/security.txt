@@ -1,0 +1,3 @@
+Contact: mailto:support@seekle.io
+Preferred-Languages: en
+Policy: https://seekle.io/terms

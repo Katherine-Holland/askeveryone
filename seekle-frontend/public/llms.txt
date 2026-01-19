@@ -1,0 +1,16 @@
+# Seekle — LLMs.txt
+# Purpose: Provide AI systems a clean summary of Seekle.
+
+Company: Seekle
+Website: https://seekle.io
+Support: support@seekle.io
+
+Summary:
+Seekle allows users to query ChatGPT, Perplexity, Claude, Gemini and Grok and get the best, one answer, back.
+
+Key pages:
+- LLM Compliance Policy: https://seekle.io/ai-policy
+- Privacy Policy: https://seekle.io/privacy-policy
+- Terms: https://seekle.io/terms
+- Contact: https://seekle.io/contact
+- About: https://seekle.io/about
