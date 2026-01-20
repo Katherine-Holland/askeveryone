@@ -569,37 +569,6 @@ export default function Home() {
                     sessionId={sessionId}
                   />
 
-                  {/* Product Hunt ribbon (above footer) */}
-                  <div className="mt-10">
-                    <div className="mx-auto max-w-2xl rounded-2xl border border-seekle-border bg-white px-4 py-3 shadow-soft">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center rounded-full bg-seekle-muted px-3 py-1 text-xs font-medium text-seekle-subtext">
-                            Featured on Product Hunt
-                          </span>
-                          <span className="text-xs text-zinc-500">
-                            If you like Seekle, support us on launch day.
-                          </span>
-                        </div>
-
-                        <a
-                          href="https://www.producthunt.com/products/seekle?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-seekle"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-block shrink-0 transition-opacity hover:opacity-90"
-                          aria-label="Seekle on Product Hunt"
-                        >
-                          <img
-                            src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1064947&theme=light"
-                            alt="Seekle - Ask everyone. One chat, many LLMs."
-                            width={250}
-                            height={54}
-                          />
-                        </a>
-                      </div>
-                    </div>
-                  </div>
-
                   <div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-zinc-500">
                     <a className="hover:text-zinc-700" href="/privacy-policy">
                       Privacy Policy
@@ -617,6 +586,52 @@ export default function Home() {
                       About
                     </a>
                   </div>
+
+                  {/* Shopify affiliate banner */}
+                  <div className="mt-8 flex justify-center">
+                    <div className="w-full max-w-2xl rounded-2xl border border-seekle-border bg-seekle-muted px-5 py-5">
+                      <div className="flex flex-col gap-3 text-center">
+                        <div className="flex justify-center">
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-seekle-brown">
+                            Sponsored
+                          </span>
+                        </div>
+
+                        <p className="text-sm text-seekle-text">
+                          Building something with Seekle? Shopify is a simple way to launch and start selling fast.
+                        </p>
+
+                        <a
+                          href="https://shopify.pxf.io/c/6898153/3323861/13624"
+                          target="_blank"
+                          rel="sponsored noopener noreferrer"
+                          className="block overflow-hidden rounded-xl border border-seekle-border bg-white transition hover:bg-seekle-cream"
+                        >
+                          <img
+                            src="https://a.impactradius-go.com/display-ad/13624-3323861"
+                            alt="Start your Shopify store"
+                            className="w-full h-auto"
+                            loading="lazy"
+                          />
+                        </a>
+
+                        <p className="text-[11px] text-zinc-500">
+                          Affiliate disclosure: Seekle may earn a commission if you sign up through
+                          this link. Supporting ads = more free searches on Seekle!
+                        </p>
+                      </div>
+
+                      {/* Impact tracking pixel */}
+                      <img
+                        src="https://imp.pxf.io/i/6898153/3323861/13624"
+                        height="0"
+                        width="0"
+                        style={{ position: "absolute", visibility: "hidden" }}
+                        alt=""
+                      />
+                    </div>
+                  </div>
+
                 </div>
               </div>
             </div>
