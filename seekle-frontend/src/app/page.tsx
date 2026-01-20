@@ -569,6 +569,37 @@ export default function Home() {
                     sessionId={sessionId}
                   />
 
+                  {/* Product Hunt ribbon (above footer) */}
+                  <div className="mt-10">
+                    <div className="mx-auto max-w-2xl rounded-2xl border border-seekle-border bg-white px-4 py-3 shadow-soft">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center rounded-full bg-seekle-muted px-3 py-1 text-xs font-medium text-seekle-subtext">
+                            Featured on Product Hunt
+                          </span>
+                          <span className="text-xs text-zinc-500">
+                            If you like Seekle, support us on launch day.
+                          </span>
+                        </div>
+
+                        <a
+                          href="https://www.producthunt.com/products/seekle?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-seekle"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block shrink-0 transition-opacity hover:opacity-90"
+                          aria-label="Seekle on Product Hunt"
+                        >
+                          <img
+                            src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1064947&theme=light"
+                            alt="Seekle - Ask everyone. One chat, many LLMs."
+                            width={250}
+                            height={54}
+                          />
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-zinc-500">
                     <a className="hover:text-zinc-700" href="/privacy-policy">
                       Privacy Policy
