@@ -10,7 +10,7 @@ import ChatSidebar, { type SidebarItem } from "@/components/ChatSidebar";
 function getOrCreateSessionId(): string {
   const key = "seekle_session_id";
 
-  // ✅ guard for SSR/edge hydration
+  // guard for SSR/edge hydration
   if (typeof window === "undefined") return "";
 
   const existing = localStorage.getItem(key);
