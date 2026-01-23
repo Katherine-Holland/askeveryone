@@ -2,7 +2,7 @@
 
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -30,43 +30,35 @@ _cached_expiry_epoch: float = 0.0  # epoch seconds
 
 def _normalize_country_to_iso2(country: str) -> str:
     """
-    Catalog API expects ISO 3166-1 alpha-2 country codes.
-    Users commonly type UK; Shopify expects GB.
+    Catalog API expects ISO 3166-1 alpha-2 codes.
+    Users type UK; Shopify expects GB.
     """
     c = (country or "").strip().upper()
     if not c:
-        return c
+        return ""
 
-    # Common aliases → ISO alpha-2
     if c in {"UK", "U.K.", "U K", "UNITED KINGDOM", "GREAT BRITAIN", "BRITAIN", "ENGLAND"}:
         return "GB"
 
-    # Accept already-valid 2-letter codes as-is
+    # Accept already-valid 2-letter codes
     if len(c) == 2 and c.isalpha():
         return c
 
-    # A few helpful extras (optional)
     if c in {"USA", "UNITED STATES", "UNITED STATES OF AMERICA"}:
         return "US"
     if c in {"UAE", "UNITED ARAB EMIRATES"}:
         return "AE"
 
-    # If they pass something unexpected, just return uppercased raw.
-    # Shopify may reject it; that's okay and will surface as a 502 with details.
     return c
 
 
 async def _get_bearer_token() -> str:
     """
     Get (and cache) a bearer token using client_credentials.
-    POST https://api.shopify.com/auth/access_token with:
-      { client_id, client_secret, grant_type: "client_credentials" }
     """
     global _cached_token, _cached_expiry_epoch
 
     now = time.time()
-
-    # Refresh a bit early to avoid edge expiry
     if _cached_token and now < (_cached_expiry_epoch - 30):
         return _cached_token
 
@@ -99,33 +91,54 @@ async def _get_bearer_token() -> str:
     expires_in = data.get("expires_in", 0)
 
     if not token:
-        raise HTTPException(
-            status_code=502,
-            detail="Shopify token response missing access_token.",
-        )
+        raise HTTPException(status_code=502, detail="Shopify token response missing access_token.")
 
     _cached_token = token
-
-    # expires_in is seconds until expiry
     try:
         _cached_expiry_epoch = now + float(expires_in)
     except Exception:
-        _cached_expiry_epoch = now + 3000  # safe fallback
+        _cached_expiry_epoch = now + 3000
 
     return token
 
 
+def _first_str(*vals: Any) -> str:
+    for v in vals:
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _extract_shop(up: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    In your response, merchant is coming through as an object.
+    Try common locations for shop/merchant details.
+    """
+    shop = up.get("shop") or up.get("merchant") or up.get("store")
+    if isinstance(shop, dict):
+        return shop
+
+    # Sometimes the "offer" carries shop info
+    offers = up.get("offers") or up.get("products") or up.get("variants") or []
+    if isinstance(offers, list) and offers and isinstance(offers[0], dict):
+        o = offers[0]
+        s = o.get("shop") or o.get("merchant") or o.get("store")
+        if isinstance(s, dict):
+            return s
+
+    return {}
+
+
 def _extract_image_url(up: Dict[str, Any]) -> str:
     """
-    Catalog payload image shapes vary. Be tolerant:
-      - direct string fields: image_url, thumbnail_url, etc.
-      - image as dict or string
-      - images as list[str] or list[dict]
-      - offer-level images
+    Catalog payloads vary a lot. Try:
+    - direct string keys (image_url etc.)
+    - image dict
+    - images list
+    - offer-level image
+    - nested media/featuredImage patterns
     """
-    image_url = ""
-
-    # 1) direct string fields on universal product
+    # 1) direct strings
     for k in (
         "image_url",
         "imageUrl",
@@ -133,131 +146,150 @@ def _extract_image_url(up: Dict[str, Any]) -> str:
         "thumbnailUrl",
         "primary_image_url",
         "primaryImageUrl",
+        "featured_image_url",
+        "featuredImageUrl",
     ):
         v = up.get(k)
         if isinstance(v, str) and v.strip():
-            image_url = v.strip()
-            break
+            return v.strip()
 
-    # 2) "image" could be a dict OR a string URL
-    if not image_url:
-        img = up.get("image") or up.get("featured_image")
-        if isinstance(img, str) and img.strip():
-            image_url = img.strip()
-        elif isinstance(img, dict):
-            image_url = str(
-                img.get("url") or img.get("src") or img.get("originalSrc") or ""
-            ).strip()
+    # 2) image may be string or dict
+    img = up.get("image") or up.get("featured_image") or up.get("featuredImage")
+    if isinstance(img, str) and img.strip():
+        return img.strip()
+    if isinstance(img, dict):
+        u = _first_str(img.get("url"), img.get("src"), img.get("originalSrc"))
+        if u:
+            return u
 
-    # 3) "images" could be list[dict] or list[str]
-    if not image_url:
-        imgs = up.get("images")
-        if isinstance(imgs, list) and imgs:
-            first = imgs[0]
-            if isinstance(first, str) and first.strip():
-                image_url = first.strip()
-            elif isinstance(first, dict):
-                image_url = str(
-                    first.get("url") or first.get("src") or first.get("originalSrc") or ""
-                ).strip()
+    # 3) images list
+    imgs = up.get("images")
+    if isinstance(imgs, list) and imgs:
+        first = imgs[0]
+        if isinstance(first, str) and first.strip():
+            return first.strip()
+        if isinstance(first, dict):
+            u = _first_str(first.get("url"), first.get("src"), first.get("originalSrc"))
+            if u:
+                return u
 
-    # 4) sometimes the offer carries the image
-    if not image_url:
-        offers = up.get("offers") or up.get("products") or up.get("variants") or []
-        if isinstance(offers, list) and offers:
-            o = offers[0] if isinstance(offers[0], dict) else {}
+    # 4) nested "media"
+    media = up.get("media")
+    if isinstance(media, dict):
+        nodes = media.get("nodes") or media.get("edges")
+        if isinstance(nodes, list) and nodes:
+            first = nodes[0]
+            if isinstance(first, dict):
+                if "node" in first and isinstance(first["node"], dict):
+                    first = first["node"]
+                preview = first.get("previewImage") or first.get("image")
+                if isinstance(preview, dict):
+                    u = _first_str(preview.get("url"), preview.get("src"), preview.get("originalSrc"))
+                    if u:
+                        return u
 
-            for k in ("image_url", "imageUrl", "thumbnail_url", "thumbnailUrl"):
-                v = o.get(k)
-                if isinstance(v, str) and v.strip():
-                    image_url = v.strip()
-                    break
+    # 5) offer-level image fields
+    offers = up.get("offers") or up.get("products") or up.get("variants") or []
+    if isinstance(offers, list) and offers and isinstance(offers[0], dict):
+        o = offers[0]
+        for k in ("image_url", "imageUrl", "thumbnail_url", "thumbnailUrl"):
+            v = o.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        oi = o.get("image") or o.get("featuredImage")
+        if isinstance(oi, str) and oi.strip():
+            return oi.strip()
+        if isinstance(oi, dict):
+            u = _first_str(oi.get("url"), oi.get("src"), oi.get("originalSrc"))
+            if u:
+                return u
 
-            if not image_url:
-                oi = o.get("image")
-                if isinstance(oi, str) and oi.strip():
-                    image_url = oi.strip()
-                elif isinstance(oi, dict):
-                    image_url = str(
-                        oi.get("url") or oi.get("src") or oi.get("originalSrc") or ""
-                    ).strip()
+    return ""
 
-            if not image_url:
-                oimgs = o.get("images")
-                if isinstance(oimgs, list) and oimgs:
-                    f = oimgs[0]
-                    if isinstance(f, str) and f.strip():
-                        image_url = f.strip()
-                    elif isinstance(f, dict):
-                        image_url = str(
-                            f.get("url") or f.get("src") or f.get("originalSrc") or ""
-                        ).strip()
 
-    return image_url
+def _format_price(amount: Any, currency: str) -> str:
+    """
+    Your response shows integers like 15799 USD.
+    That looks like minor units (cents/pence) in many commerce APIs.
+    We'll do a safe heuristic:
+      - if int and >= 1000 => treat as minor units, divide by 100
+      - if already decimal/string => keep
+    """
+    cur = (currency or "").strip().upper() or "USD"
+
+    # dict case: {amount, currency_code}
+    if isinstance(amount, dict):
+        a = amount.get("amount") or amount.get("value")
+        c = amount.get("currency_code") or amount.get("currencyCode") or cur
+        return _format_price(a, str(c))
+
+    if isinstance(amount, (int, float)):
+        if isinstance(amount, int) and abs(amount) >= 1000:
+            val = amount / 100.0
+            return f"{val:.2f} {cur}"
+        return f"{amount} {cur}"
+
+    if isinstance(amount, str) and amount.strip():
+        return f"{amount.strip()} {cur}"
+
+    return f"— {cur}"
 
 
 def _to_shop_product(up: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Minimal mapping to your frontend ShopProduct type:
-      { id, title, price, merchant, imageUrl, href, badges? }
-
-    Catalog returns "Universal Products" that may contain offers.
-    We'll pick a best-effort first offer if present.
-    """
-    upid = str(
-        up.get("id") or up.get("upid") or up.get("universal_product_id") or ""
-    )
+    upid = str(up.get("id") or up.get("upid") or up.get("universal_product_id") or "")
     title = str(up.get("title") or up.get("name") or "Product")
+
+    shop = _extract_shop(up)
+    merchant_name = _first_str(shop.get("name"), shop.get("shop_name"), shop.get("merchant"))
+    merchant_url = _first_str(shop.get("onlineStoreUrl"), shop.get("online_store_url"), shop.get("url"))
 
     image_url = _extract_image_url(up)
 
-    merchant = "Shopify"
-    price_str = ""
+    # Offers
+    offers = up.get("offers") or up.get("products") or up.get("variants") or []
     href = ""
+    price_str = "— USD"
     badges: List[str] = []
 
-    offers = up.get("offers") or up.get("products") or up.get("variants") or []
-    if isinstance(offers, list) and offers:
-        o = offers[0] if isinstance(offers[0], dict) else {}
+    if isinstance(offers, list) and offers and isinstance(offers[0], dict):
+        o = offers[0]
 
-        merchant = str(
-            o.get("shop_name")
-            or o.get("merchant")
-            or o.get("shop")
-            or o.get("store_name")
-            or merchant
-        )
+        # Prefer offer URL if present
+        href = _first_str(o.get("url"), o.get("product_url"), o.get("href"))
 
-        # price fields vary; best-effort extraction
-        price = (
+        # Currency + price extraction
+        currency = _first_str(o.get("currency"), o.get("currency_code"), o.get("currencyCode")) or "USD"
+        raw_price = (
             o.get("price")
             or o.get("amount")
             or o.get("min_price")
             or o.get("price_min")
             or o.get("minPrice")
         )
-        currency = o.get("currency") or o.get("currency_code") or o.get("currencyCode") or "USD"
+        price_str = _format_price(raw_price, currency)
 
-        if isinstance(price, dict):
-            amount = price.get("amount") or price.get("value")
-            currency = price.get("currency_code") or price.get("currencyCode") or currency
-            if amount is not None:
-                price_str = f"{amount} {currency}"
-        elif price is not None:
-            price_str = f"{price} {currency}"
-
-        href = str(o.get("url") or o.get("product_url") or o.get("href") or "")
-
-        # Sale badge (best-effort)
+        # Sale badge
         compare_at = o.get("compare_at_price") or o.get("compareAtPrice") or o.get("compare_at")
         if compare_at:
             badges.append("Sale")
 
-    # Fallbacks if missing
-    if not price_str:
-        price_str = "—"
+        # Offer shop override (if present)
+        oshop = o.get("shop") or o.get("merchant") or o.get("store")
+        if isinstance(oshop, dict):
+            merchant_name = _first_str(oshop.get("name")) or merchant_name
+            merchant_url = _first_str(oshop.get("onlineStoreUrl"), oshop.get("url")) or merchant_url
+
+        # Offer image override
+        if not image_url:
+            image_url = _extract_image_url({"offers": [o]})  # reuse logic safely
+
+    # If no offer URL, at least send them to the merchant store
     if not href:
-        href = "#"
+        href = merchant_url or "#"
+
+    if not merchant_name:
+        merchant_name = "Shopify"
+
     if not image_url:
         image_url = "/window.svg"
 
@@ -265,7 +297,7 @@ def _to_shop_product(up: Dict[str, Any]) -> Dict[str, Any]:
         "id": upid or title,
         "title": title,
         "price": price_str,
-        "merchant": merchant,
+        "merchant": merchant_name,
         "imageUrl": image_url,
         "href": href,
         "badges": badges,
@@ -275,32 +307,28 @@ def _to_shop_product(up: Dict[str, Any]) -> Dict[str, Any]:
 @router.get("/shop/search")
 async def shop_search(
     q: str = Query(..., description="Search query from UI (frontend uses q=...)"),
-    country: Optional[str] = Query(
-        None, description="ISO 3166-1 alpha-2 (e.g. GB, US). UK will be normalized to GB."
-    ),
+    country: Optional[str] = Query(None, description="ISO alpha-2 (e.g. GB, US). UK will normalize to GB."),
+    gender: Optional[str] = Query(None),
+    size: Optional[str] = Query(None),
     saleOnly: Optional[bool] = Query(None),
     pricePreset: Optional[str] = Query(None),
     giftMode: Optional[bool] = Query(None),
     limit: int = Query(10, ge=1, le=10),
+    debug: bool = Query(False),
 ) -> Dict[str, Any]:
-    """
-    Proxies Seekle Shop search to Shopify Catalog API global search.
-    GET /global/v2/search?query=... with Authorization: Bearer <token>.
-    """
     token = await _get_bearer_token()
 
     params: Dict[str, Any] = {
-        "query": q,               # Catalog API expects `query`
-        "available_for_sale": 1,  # aligns with “purchasable”
+        "query": q,
+        "available_for_sale": 1,
         "limit": limit,
         "products_limit": 10,
     }
 
-    # Normalize country (UK -> GB, etc.) then send to Shopify as ships_to
     if country:
         iso2 = _normalize_country_to_iso2(country)
         if iso2:
-            params["ships_to"] = iso2
+            params["ships_to"] = iso2  # docs: ISO 3166 country code :contentReference[oaicite:1]{index=1}
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.get(
@@ -315,13 +343,10 @@ async def shop_search(
             detail=f"Shopify Catalog search failed ({r.status_code}): {r.text}",
         )
 
-    data = r.json()
+    data: Union[List[Any], Dict[str, Any]] = r.json()
 
-    # Shopify Catalog search can return:
-    #  - a top-level list of universal products
-    #  - OR an object with a list under a key (results/universal_products/etc.)
+    # API can return top-level list OR object wrapper. :contentReference[oaicite:2]{index=2}
     items: List[Dict[str, Any]] = []
-
     if isinstance(data, list):
         items = [x for x in data if isinstance(x, dict)]
     elif isinstance(data, dict):
@@ -333,7 +358,16 @@ async def shop_search(
 
     mapped = [_to_shop_product(x) for x in items[:limit]]
 
-    # Phase 1: leave saleOnly/pricePreset/giftMode for future filtering/ranking.
+    if debug:
+        return {
+            "ok": True,
+            "message": "DEBUG raw sample (first item only)",
+            "query": q,
+            "ships_to": params.get("ships_to"),
+            "raw_first_item": items[0] if items else None,
+            "mapped_first_item": mapped[0] if mapped else None,
+        }
+
     return {
         "ok": True,
         "message": "Catalog API search",
