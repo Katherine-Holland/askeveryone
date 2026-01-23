@@ -19,12 +19,14 @@ export default function ShopResults({
   activeVibeName,
   products,
   onPin,
+  isSearching,
 }: {
   query: string;
   prefs: ShopPrefs;
   activeVibeName: string;
   products: ShopProduct[];
   onPin: (p: ShopProduct) => void;
+  isSearching: boolean;
 }) {
   const hasQuery = Boolean(query.trim());
   const hasCountry = Boolean(prefs.country);
@@ -71,9 +73,23 @@ export default function ShopResults({
         </div>
       </div>
 
+      {isSearching ? (
+        <div className="mb-4 rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-sm">
+          <div className="inline-flex items-center gap-2">
+            <span className="inline-block h-4 w-4 animate-spin rounded-full border border-black/30 border-t-transparent" />
+            <span className="font-medium">Searching…</span>
+          </div>
+          <div className="mt-1 text-xs text-black/60">
+            Fetching results (Shopify wiring comes next).
+          </div>
+        </div>
+      ) : null}
+
       {!hasCountry && (
         <div className="mb-4 rounded-2xl border border-black/10 bg-black/5 p-3 text-sm">
-          <div className="font-medium">Set your country for accurate prices & delivery.</div>
+          <div className="font-medium">
+            Set your country for accurate prices & delivery.
+          </div>
           <div className="text-xs text-black/60">
             (Phase 1: this will matter more once Shopify results are live.)
           </div>
@@ -84,7 +100,8 @@ export default function ShopResults({
         <div className="flex min-h-[340px] flex-col items-center justify-center rounded-2xl border border-dashed border-black/15 bg-black/[0.02] p-8 text-center">
           <div className="text-base font-semibold">Start shopping</div>
           <p className="mt-2 max-w-sm text-sm text-black/60">
-            Search for something above. We’ll show purchasable results and you can save favourites to your Vibes.
+            Search for something above. We’ll show purchasable results and you
+            can save favourites to your Vibes.
           </p>
           <p className="mt-4 text-xs text-black/50">
             Try: <span className="font-medium">“red coat in the sale”</span>
@@ -94,24 +111,36 @@ export default function ShopResults({
         <div className="flex min-h-[340px] flex-col items-center justify-center rounded-2xl border border-dashed border-black/15 bg-black/[0.02] p-8 text-center">
           <div className="text-base font-semibold">No results yet</div>
           <p className="mt-2 max-w-sm text-sm text-black/60">
-            (UI skeleton) Once Shopify is connected, this will show real products.
+            (UI skeleton) Once Shopify is connected, this will show real
+            products.
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {products.map((p) => (
-            <article key={p.id} className="rounded-2xl border border-black/10 bg-white p-3">
+            <article
+              key={p.id}
+              className="rounded-2xl border border-black/10 bg-white p-3"
+            >
               <div className="flex gap-3">
                 <div className="h-16 w-16 flex-none overflow-hidden rounded-xl border border-black/10 bg-black/5">
                   {/* Placeholder image; later replace with <Image /> */}
-                  <img src={p.imageUrl} alt="" className="h-full w-full object-contain p-2 opacity-70" />
+                  <img
+                    src={p.imageUrl}
+                    alt=""
+                    className="h-full w-full object-contain p-2 opacity-70"
+                  />
                 </div>
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">{p.title}</div>
-                      <div className="mt-1 text-xs text-black/60">{p.merchant}</div>
+                      <div className="truncate text-sm font-medium">
+                        {p.title}
+                      </div>
+                      <div className="mt-1 text-xs text-black/60">
+                        {p.merchant}
+                      </div>
                     </div>
                     <div className="text-sm font-semibold">{p.price}</div>
                   </div>
@@ -154,7 +183,8 @@ export default function ShopResults({
 
       {hasQuery && (
         <div className="mt-4 text-xs text-black/50">
-          Phase 1 note: results are placeholder cards. Next step is wiring Shopify search → real cards.
+          Phase 1 note: results are placeholder cards. Next step is wiring
+          Shopify search → real cards.
         </div>
       )}
     </section>
