@@ -14,6 +14,7 @@ from app.schemas import AskRequest, AskResponse
 from app.orchestrator import run_pipeline
 from app.config import settings
 from app.db.session import init_engine, get_session
+from app.api import shop
 
 # limits + billing
 from app.limits import daily_limit_for_user, max_tokens_for_tier
@@ -72,6 +73,7 @@ app.include_router(metrics_router)
 app.include_router(diagnostics_router)
 app.include_router(test_provider_router)
 app.include_router(billing_router)
+app.include_router(shop.router)
 
 
 @app.get("/favicon.ico")
