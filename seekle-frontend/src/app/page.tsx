@@ -6,6 +6,7 @@ import LoginModal from "@/components/LoginModal";
 import AccountMenu from "@/components/AccountMenu";
 import SeekleRipple from "@/components/SeekleRipple";
 import ChatSidebar, { type SidebarItem } from "@/components/ChatSidebar";
+import Link from "next/link";
 
 function getOrCreateSessionId(): string {
   const key = "seekle_session_id";
@@ -139,8 +140,10 @@ function safeCitations(resp: AskResponse | null): Citation[] {
 export default function Home() {
   const [mounted, setMounted] = useState(false);
 
-  // ✅ IMPORTANT: set sessionId immediately on first client render
-  const [sessionId, setSessionId] = useState<string>(() => getOrCreateSessionId());
+  // IMPORTANT: set sessionId immediately on first client render
+  const [sessionId, setSessionId] = useState<string>(() =>
+    getOrCreateSessionId()
+  );
 
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -373,8 +376,16 @@ export default function Home() {
         </div>
       ) : null}
 
-      {/* Fixed top-right account menu */}
-      <div className="fixed top-6 right-6 z-50">
+      {/* Fixed top-right actions */}
+      <div className="fixed top-6 right-6 z-50 flex items-center gap-2">
+        <Link
+          href="/shop"
+          className="rounded-full border border-seekle-border bg-white px-4 py-2 text-sm text-zinc-700 shadow-sm hover:bg-seekle-muted transition-colors"
+          aria-label="Open Seekle Shop"
+        >
+          Seekle Shop
+        </Link>
+
         {mounted ? (
           <AccountMenu
             isLoggedIn={!!showSidebar}
@@ -401,8 +412,7 @@ export default function Home() {
                 credits={billing?.credits_balance ?? null}
                 planLabel={
                   billing?.tier
-                    ? billing.tier.charAt(0).toUpperCase() +
-                      billing.tier.slice(1)
+                    ? billing.tier.charAt(0).toUpperCase() + billing.tier.slice(1)
                     : billing?.plan === "paid"
                     ? "Starter"
                     : "Free"
@@ -517,7 +527,11 @@ export default function Home() {
                             {sourcesOpen ? (
                               <div className="mt-2 space-y-2">
                                 {citations.slice(0, 8).map((c, idx) => {
-                                  const title = (c?.title || c?.url || "Source").toString();
+                                  const title = (
+                                    c?.title ||
+                                    c?.url ||
+                                    "Source"
+                                  ).toString();
                                   const url = (c?.url || "").toString();
                                   const date = (c?.date || "").toString();
 
@@ -598,7 +612,8 @@ export default function Home() {
                         </div>
 
                         <p className="text-sm text-seekle-text">
-                          Building something with Seekle? Shopify is a simple way to launch and start selling fast.
+                          Building something with Seekle? Shopify is a simple way
+                          to launch and start selling fast.
                         </p>
 
                         <a
@@ -616,8 +631,9 @@ export default function Home() {
                         </a>
 
                         <p className="text-[11px] text-zinc-500">
-                          Affiliate disclosure: Seekle may earn a commission if you sign up through
-                          this link. Supporting ads = more free searches on Seekle!
+                          Affiliate disclosure: Seekle may earn a commission if
+                          you sign up through this link. Supporting ads = more
+                          free searches on Seekle!
                         </p>
                       </div>
 
@@ -631,7 +647,6 @@ export default function Home() {
                       />
                     </div>
                   </div>
-
                 </div>
               </div>
             </div>
