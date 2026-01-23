@@ -129,28 +129,28 @@ export default function ShopPage() {
   const activeVibe =
     vibesForUi.find((v) => v.id === activeVibeId) ?? vibesForUi[0];
 
-  // ✅ derive pin counts per vibe (for UI + future VibesPanel integration)
+  // ✅ derive pin counts per vibe (for UI)
   const pinCountsByVibeId = useMemo(() => {
     const out: Record<string, number> = {};
     for (const v of vibesForUi) out[v.id] = (pinsByVibe[v.id] || []).length;
     return out;
   }, [pinsByVibe, vibesForUi]);
 
+  // ✅ thumbnails per vibe (for VibesPanel)
   const thumbsByVibeId = useMemo(() => {
-  const out: Record<string, { id: string; imageUrl: string; title?: string }[]> = {};
+    const out: Record<string, { id: string; imageUrl: string; title?: string }[]> =
+      {};
+    for (const v of vibesForUi) {
+      const pins = pinsByVibe[v.id] || [];
+      out[v.id] = pins.map((p) => ({ id: p.id, imageUrl: p.imageUrl, title: p.title }));
+    }
+    return out;
+  }, [pinsByVibe, vibesForUi]);
 
-  for (const v of vibesForUi) {
-    const pins = pinsByVibe[v.id] || [];
-    out[v.id] = pins.map((p) => ({
-      id: p.id,
-      imageUrl: p.imageUrl,
-      title: p.title,
-    }));
-  }
-
-  return out;
-}, [pinsByVibe, vibesForUi]);
-
+  // ✅ active vibe saved items (for the new panel)
+  const activePins: ShopProduct[] = useMemo(() => {
+    return pinsByVibe[activeVibeId] || [];
+  }, [pinsByVibe, activeVibeId]);
 
   async function runShopSearch() {
     const q = query.trim();
@@ -160,8 +160,6 @@ export default function ShopPage() {
     setSearchError(null);
 
     try {
-      // Keep it simple: send q + a few prefs.
-      // Later we can send full prefs as JSON and/or include vibe context.
       const url = new URL("/api/shop/search", window.location.origin);
       url.searchParams.set("q", q);
       if (prefs.country) url.searchParams.set("country", prefs.country);
@@ -171,20 +169,12 @@ export default function ShopPage() {
       url.searchParams.set("pricePreset", prefs.pricePreset);
       url.searchParams.set("giftMode", prefs.giftMode ? "true" : "false");
 
-      const r = await fetch(url.toString(), {
-        method: "GET",
-        cache: "no-store",
-      });
-
-      // If the stub returns 501, we still want the UI to show something useful.
+      const r = await fetch(url.toString(), { method: "GET", cache: "no-store" });
       const data = (await r.json().catch(() => null)) as ShopSearchResponse | null;
-
       const apiResults = data?.results ?? [];
 
-      // Fallback: if API returns no results (or stub), show mock results to keep UX alive.
       setProducts(apiResults.length ? apiResults : MOCK_RESULTS);
 
-      // If it’s a stub response, show a subtle message (optional).
       if (!r.ok && data?.message) {
         setSearchError(data.message);
       }
@@ -197,7 +187,6 @@ export default function ShopPage() {
   }
 
   const onPin = (product: ShopProduct) => {
-    // ✅ Phase 1: pin to localStorage, de-dupe by product.id per vibe
     setPinsByVibe((prev) => {
       const existing = prev[activeVibeId] || [];
       const already = existing.some((x) => x.id === product.id);
@@ -209,10 +198,32 @@ export default function ShopPage() {
       return next;
     });
 
-    // ✅ toast
     setToast(`Saved to ${activeVibe.name}`);
-    window.clearTimeout((onPin as any)._t);
-    (onPin as any)._t = window.setTimeout(() => setToast(null), 1600);
+    window.setTimeout(() => setToast(null), 1600);
+  };
+
+  const onRemovePin = (productId: string) => {
+    setPinsByVibe((prev) => {
+      const existing = prev[activeVibeId] || [];
+      const nextForVibe = existing.filter((p) => p.id !== productId);
+      const next: PinsByVibe = { ...prev, [activeVibeId]: nextForVibe };
+      safeSavePins(next);
+      return next;
+    });
+
+    setToast(`Removed from ${activeVibe.name}`);
+    window.setTimeout(() => setToast(null), 1600);
+  };
+
+  const onClearVibe = () => {
+    setPinsByVibe((prev) => {
+      const next: PinsByVibe = { ...prev, [activeVibeId]: [] };
+      safeSavePins(next);
+      return next;
+    });
+
+    setToast(`Cleared ${activeVibe.name}`);
+    window.setTimeout(() => setToast(null), 1600);
   };
 
   return (
@@ -248,7 +259,7 @@ export default function ShopPage() {
         <ShopHeader
           query={query}
           setQuery={setQuery}
-          providerLabel={isSearching ? "Searching…" : "Shop search (stub)"}
+          providerLabel={isSearching ? "Searching…" : "Shop search BETA"}
           onSearch={runShopSearch}
           isSearching={isSearching}
         />
@@ -280,17 +291,8 @@ export default function ShopPage() {
             />
           </div>
 
-          {/* Right: Vibes */}
-          <div className="lg:col-span-3">
-            {/* Phase 1: we’re not rendering counts inside VibesPanel yet.
-                But pinCountsByVibeId is computed and ready for the next step (VibesPanel). */}
-            <div className="mb-2 text-xs text-black/50">
-              Saved:{" "}
-              <span className="font-medium">
-                {pinCountsByVibeId[activeVibeId] ?? 0}
-              </span>
-            </div>
-
+          {/* Right: Vibes + Saved */}
+          <div className="lg:col-span-3 space-y-3">
             <VibesPanel
               vibes={vibesForUi}
               activeVibeId={activeVibeId}
@@ -299,6 +301,74 @@ export default function ShopPage() {
               countsByVibeId={pinCountsByVibeId}
               thumbsByVibeId={thumbsByVibeId}
             />
+
+            {/* ✅ Saved items for the active vibe */}
+            <aside className="rounded-2xl border border-black/10 bg-white p-4">
+              <div className="mb-3 flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold">Saved</h3>
+                  <p className="text-xs text-black/60">
+                    In <span className="font-medium">{activeVibe.name}</span>
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={onClearVibe}
+                  disabled={activePins.length === 0}
+                  className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm hover:bg-black/5 disabled:opacity-50"
+                  title="Clear saved items in this vibe"
+                >
+                  Clear
+                </button>
+              </div>
+
+              {activePins.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-black/15 bg-black/[0.02] p-4 text-sm text-black/60">
+                  Nothing saved yet. Tap <span className="font-medium">Save</span> on a result to add it here.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {activePins.slice(0, 8).map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center gap-3 rounded-2xl border border-black/10 bg-white p-2"
+                    >
+                      <div className="h-10 w-10 overflow-hidden rounded-xl border border-black/10 bg-black/5">
+                        <img
+                          src={p.imageUrl}
+                          alt=""
+                          className="h-full w-full object-contain p-1"
+                          loading="lazy"
+                        />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{p.title}</div>
+                        <div className="mt-0.5 text-xs text-black/60">
+                          {p.price} · {p.merchant}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => onRemovePin(p.id)}
+                        className="rounded-xl border border-black/10 bg-white px-2 py-1 text-xs hover:bg-black/5"
+                        title="Remove"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+
+                  {activePins.length > 8 ? (
+                    <div className="text-xs text-black/50">
+                      Showing 8 of {activePins.length}. (“View all” page coming soon.)
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </aside>
           </div>
         </div>
       </div>
