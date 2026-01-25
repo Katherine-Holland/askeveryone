@@ -137,10 +137,8 @@ export default function ShopPage() {
 
   // ✅ thumbnails per vibe (for VibesPanel)
   const thumbsByVibeId = useMemo(() => {
-    const out: Record<
-      string,
-      { id: string; imageUrl: string; title?: string }[]
-    > = {};
+    const out: Record<string, { id: string; imageUrl: string; title?: string }[]> =
+      {};
     for (const v of vibesForUi) {
       const pins = pinsByVibe[v.id] || [];
       out[v.id] = pins.map((p) => ({
@@ -152,7 +150,7 @@ export default function ShopPage() {
     return out;
   }, [pinsByVibe, vibesForUi]);
 
-  // ✅ active vibe saved items (for the new panel)
+  // ✅ active vibe saved items
   const activePins: ShopProduct[] = useMemo(() => {
     return pinsByVibe[activeVibeId] || [];
   }, [pinsByVibe, activeVibeId]);
@@ -174,7 +172,11 @@ export default function ShopPage() {
       url.searchParams.set("pricePreset", prefs.pricePreset);
       url.searchParams.set("giftMode", prefs.giftMode ? "true" : "false");
 
-      const r = await fetch(url.toString(), { method: "GET", cache: "no-store" });
+      const r = await fetch(url.toString(), {
+        method: "GET",
+        cache: "no-store",
+      });
+
       const data = (await r.json().catch(() => null)) as ShopSearchResponse | null;
       const apiResults = data?.results ?? [];
 
@@ -194,9 +196,11 @@ export default function ShopPage() {
       const existing = prev[activeVibeId] || [];
       const already = existing.some((x) => x.id === product.id);
 
-      const nextForVibe = already ? existing : [product, ...existing].slice(0, 200);
-      const next: PinsByVibe = { ...prev, [activeVibeId]: nextForVibe };
+      const nextForVibe = already
+        ? existing
+        : [product, ...existing].slice(0, 200);
 
+      const next: PinsByVibe = { ...prev, [activeVibeId]: nextForVibe };
       safeSavePins(next);
       return next;
     });
@@ -229,11 +233,42 @@ export default function ShopPage() {
     window.setTimeout(() => setToast(null), 1600);
   };
 
+  // ✅ NEW: Share Vibe (branded Seekle link)
+  const onShareVibe = (vibeId: string) => {
+    const vibe = vibesForUi.find((v) => v.id === vibeId);
+    const name = vibe?.name || "Vibe";
+
+    const shareUrl = `${window.location.origin}/shop?vibe=${encodeURIComponent(
+      vibeId
+    )}`;
+    const text = `Seekle Vibe: ${name}`;
+
+    const doCopy = async () => {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setToast("Link copied — share it on TikTok ✨");
+        window.setTimeout(() => setToast(null), 1600);
+      } catch {
+        // Fallback if clipboard blocked
+        // eslint-disable-next-line no-alert
+        window.prompt("Copy this link:", shareUrl);
+      }
+    };
+
+    if (navigator.share) {
+      void navigator
+        .share({ title: `Seekle Vibe — ${name}`, text, url: shareUrl })
+        .catch(() => void doCopy());
+    } else {
+      void doCopy();
+    }
+  };
+
   return (
     <div className="min-h-[70vh] px-4 py-6">
       {/* Toast */}
       {toast ? (
-        <div className="fixed top-6 left-1/2 z-50 -translate-x-1/2">
+        <div className="fixed left-1/2 top-6 z-50 -translate-x-1/2">
           <div className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm shadow-sm">
             {toast}
           </div>
@@ -301,6 +336,7 @@ export default function ShopPage() {
               activeVibeId={activeVibeId}
               onSelectVibe={setActiveVibeId}
               onCreateVibe={() => alert("Create Vibe (coming soon)")}
+              onShareVibe={onShareVibe}
               countsByVibeId={pinCountsByVibeId}
               thumbsByVibeId={thumbsByVibeId}
             />
@@ -328,7 +364,9 @@ export default function ShopPage() {
 
               {activePins.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-black/15 bg-black/[0.02] p-4 text-sm text-black/60">
-                  Nothing saved yet. Tap <span className="font-medium">Save</span> on a result to add it here.
+                  Nothing saved yet. Tap{" "}
+                  <span className="font-medium">Save</span> on a result to add it
+                  here.
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -347,7 +385,9 @@ export default function ShopPage() {
                       </div>
 
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium">{p.title}</div>
+                        <div className="truncate text-sm font-medium">
+                          {p.title}
+                        </div>
                         <div className="mt-0.5 text-xs text-black/60">
                           {p.price} · {p.merchant}
                         </div>
@@ -366,7 +406,7 @@ export default function ShopPage() {
 
                   {activePins.length > 8 ? (
                     <div className="text-xs text-black/50">
-                      Showing 8 of {activePins.length}. (“View all” page coming soon.)
+                      Showing 8 of {activePins.length}. (“View all” page in BETA.)
                     </div>
                   ) : null}
                 </div>
