@@ -79,7 +79,10 @@ async def _get_bearer_token() -> str:
     expires_in = data.get("expires_in", 0)
 
     if not token:
-        raise HTTPException(status_code=502, detail="Shopify token response missing access_token.")
+        raise HTTPException(
+            status_code=502,
+            detail="Shopify token response missing access_token.",
+        )
 
     _cached_token = token
     try:
@@ -198,13 +201,16 @@ def _to_shop_product(up: Dict[str, Any]) -> Dict[str, Any]:
 @router.get("/shop/search")
 async def shop_search(
     q: str = Query(..., description="Search query from UI (frontend uses q=...)"),
-    country: Optional[str] = Query(None, description="ISO alpha-2 (e.g. GB, US). UK normalizes to GB."),
+    country: Optional[str] = Query(
+        None, description="ISO alpha-2 (e.g. GB, US). UK normalizes to GB."
+    ),
     gender: Optional[str] = Query(None),
     size: Optional[str] = Query(None),
     saleOnly: Optional[bool] = Query(None),
     pricePreset: Optional[str] = Query(None),
     giftMode: Optional[bool] = Query(None),
-    limit: int = Query(10, ge=1, le=10),
+    # ✅ default now 6 (still capped at 10)
+    limit: int = Query(6, ge=1, le=10),
     debug: bool = Query(False),
 ) -> Dict[str, Any]:
     token = await _get_bearer_token()
