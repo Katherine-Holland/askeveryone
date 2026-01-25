@@ -20,6 +20,7 @@ export default function VibesPanel({
   activeVibeId,
   onSelectVibe,
   onCreateVibe,
+  onShareVibe,
   countsByVibeId,
   thumbsByVibeId,
 }: {
@@ -27,6 +28,7 @@ export default function VibesPanel({
   activeVibeId: string;
   onSelectVibe: (id: string) => void;
   onCreateVibe: () => void;
+  onShareVibe: (vibeId: string) => void;
   countsByVibeId?: Record<string, number>;
   thumbsByVibeId?: Record<string, Thumb[]>;
 }) {
@@ -35,16 +37,29 @@ export default function VibesPanel({
       <div className="mb-3 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold">Vibes</h2>
-          <p className="text-xs text-black/60">Save favourites into a vibe. Share later.</p>
+          <p className="text-xs text-black/60">
+            Save favourites into your vibe. Share later.
+          </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onCreateVibe}
-          className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm hover:bg-black/5"
-        >
-          + New
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onShareVibe(activeVibeId)}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm hover:bg-black/5"
+            title="Share this vibe"
+          >
+            Share Vibe
+          </button>
+
+          <button
+            type="button"
+            onClick={onCreateVibe}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm hover:bg-black/5"
+          >
+            + New
+          </button>
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -63,18 +78,22 @@ export default function VibesPanel({
               onClick={() => onSelectVibe(v.id)}
               className={[
                 "w-full rounded-2xl border p-3 text-left transition",
-                isActive ? "border-black/20 bg-black/5" : "border-black/10 bg-white hover:bg-black/5",
+                isActive
+                  ? "border-black/20 bg-black/5"
+                  : "border-black/10 bg-white hover:bg-black/5",
               ].join(" ")}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{v.name}</div>
-                  <div className="mt-1 text-xs text-black/60">{v.description}</div>
+                  <div className="mt-1 text-xs text-black/60">
+                    {v.description}
+                  </div>
                 </div>
 
                 <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-black/10 bg-white px-2 py-0.5 text-xs text-black/70">
                   <span className="font-medium">{count}</span>
-                  <span className="text-black/50">{count === 1 ? "saved" : "saved"}</span>
+                  <span className="text-black/50">saved</span>
                 </span>
               </div>
 
@@ -98,20 +117,22 @@ export default function VibesPanel({
                     ))}
 
                     {overflow > 0 ? (
-                      <div className="h-9 rounded-xl border border-black/10 bg-white px-2 text-xs text-black/60 flex items-center">
+                      <div className="flex h-9 items-center rounded-xl border border-black/10 bg-white px-2 text-xs text-black/60">
                         +{overflow}
                       </div>
                     ) : null}
                   </>
                 ) : (
                   <div className="text-xs text-black/50">
-                    {v.isStarter ? "Start shopping to add items here." : "No saved items yet."}
+                    {v.isStarter
+                      ? "Start shopping to add items here."
+                      : "No saved items yet."}
                   </div>
                 )}
               </div>
 
               <div className="mt-3 text-xs text-black/50">
-                (Pins + share links come in Phase 2 once Neon is wired.)
+                (BETA.)
               </div>
             </button>
           );
