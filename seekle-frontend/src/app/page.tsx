@@ -7,11 +7,6 @@ import AccountMenu from "@/components/AccountMenu";
 import SeekleRipple from "@/components/SeekleRipple";
 import ChatSidebar, { type SidebarItem } from "@/components/ChatSidebar";
 import Link from "next/link";
-import { init } from '@plausible-analytics/tracker'
-
-init({
-  domain: 'seekle.io'
-})
 
 function getOrCreateSessionId(): string {
   const key = "seekle_session_id";
