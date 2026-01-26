@@ -5,7 +5,7 @@ import { type ShopPrefs } from "./ShopPreferences";
 export type ShopProduct = {
   id: string;
   title: string;
-  price: string; // still present from API, but we won't display it
+  price: string; // still present from API
   merchant: string;
   imageUrl: string;
   href: string;
