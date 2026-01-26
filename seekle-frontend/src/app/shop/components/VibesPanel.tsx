@@ -15,6 +15,11 @@ type Thumb = {
   title?: string;
 };
 
+function safeImg(src?: string) {
+  if (!src || typeof src !== "string") return "/window.svg";
+  return src.trim() || "/window.svg";
+}
+
 export default function VibesPanel({
   vibes,
   activeVibeId,
@@ -62,12 +67,14 @@ export default function VibesPanel({
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-3">
         {vibes.map((v) => {
           const count = countsByVibeId?.[v.id] ?? 0;
           const thumbs = thumbsByVibeId?.[v.id] ?? [];
-          const top = thumbs.slice(0, 3);
-          const overflow = Math.max(0, thumbs.length - top.length);
+
+          // Newest-first is already what your pinning does; treat thumbs[0] as cover.
+          const cover = thumbs[0];
+          const grid = thumbs.slice(0, 4);
 
           const isActive = v.id === activeVibeId;
 
@@ -77,62 +84,86 @@ export default function VibesPanel({
               type="button"
               onClick={() => onSelectVibe(v.id)}
               className={[
-                "w-full rounded-2xl border p-3 text-left transition",
+                "w-full overflow-hidden rounded-2xl border text-left transition",
+                "hover:shadow-sm",
                 isActive
-                  ? "border-black/20 bg-black/5"
-                  : "border-black/10 bg-white hover:bg-black/5",
+                  ? "border-black/20 bg-black/[0.02]"
+                  : "border-black/10 bg-white hover:bg-black/[0.02]",
               ].join(" ")}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{v.name}</div>
-                  <div className="mt-1 text-xs text-black/60">
-                    {v.description}
+              {/* Visual preview */}
+              <div className="relative">
+                {/* Big cover */}
+                <div className="relative aspect-[16/10] w-full bg-black/[0.04]">
+                  <img
+                    src={safeImg(cover?.imageUrl)}
+                    alt=""
+                    className={[
+                      "h-full w-full object-cover",
+                      cover?.imageUrl ? "" : "opacity-60",
+                    ].join(" ")}
+                    loading="lazy"
+                  />
+
+                  {/* Top overlays */}
+                  <div className="absolute left-3 top-3">
+                    <span className="rounded-full border border-black/10 bg-white/90 px-2 py-1 text-xs backdrop-blur">
+                      {v.name}
+                    </span>
                   </div>
+
+                  <div className="absolute right-3 top-3">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-white/90 px-2 py-1 text-xs text-black/70 backdrop-blur">
+                      <span className="font-medium">{count}</span>
+                      <span className="text-black/50">saved</span>
+                    </span>
+                  </div>
+
+                  {/* Subtle Seekle “lookbook” feel */}
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/10 via-transparent to-transparent" />
                 </div>
 
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-black/10 bg-white px-2 py-0.5 text-xs text-black/70">
-                  <span className="font-medium">{count}</span>
-                  <span className="text-black/50">saved</span>
-                </span>
-              </div>
+                {/* Mini board preview */}
+                <div className="border-t border-black/10 bg-white p-3">
+                  {grid.length > 0 ? (
+                    <div className="grid grid-cols-4 gap-2">
+                      {grid.map((t) => (
+                        <div
+                          key={t.id}
+                          className="aspect-square overflow-hidden rounded-xl border border-black/10 bg-black/[0.03]"
+                          title={t.title || "Saved item"}
+                        >
+                          <img
+                            src={safeImg(t.imageUrl)}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                        </div>
+                      ))}
+                      {grid.length < 4
+                        ? Array.from({ length: 4 - grid.length }).map((_, i) => (
+                            <div
+                              key={`empty-${v.id}-${i}`}
+                              className="aspect-square overflow-hidden rounded-xl border border-dashed border-black/10 bg-black/[0.02]"
+                            />
+                          ))
+                        : null}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-black/10 bg-black/[0.02] p-3 text-sm text-black/60">
+                      {v.isStarter
+                        ? "Start shopping to add items to this vibe."
+                        : "No saved items yet."}
+                    </div>
+                  )}
 
-              {/* Thumbnail strip */}
-              <div className="mt-3 flex items-center gap-2">
-                {top.length > 0 ? (
-                  <>
-                    {top.map((t) => (
-                      <div
-                        key={t.id}
-                        className="h-9 w-9 overflow-hidden rounded-xl border border-black/10 bg-white"
-                        title={t.title || "Saved item"}
-                      >
-                        <img
-                          src={t.imageUrl || "/window.svg"}
-                          alt=""
-                          className="h-full w-full object-contain p-1"
-                          loading="lazy"
-                        />
-                      </div>
-                    ))}
-
-                    {overflow > 0 ? (
-                      <div className="flex h-9 items-center rounded-xl border border-black/10 bg-white px-2 text-xs text-black/60">
-                        +{overflow}
-                      </div>
-                    ) : null}
-                  </>
-                ) : (
-                  <div className="text-xs text-black/50">
-                    {v.isStarter
-                      ? "Start shopping to add items here."
-                      : "No saved items yet."}
+                  {/* Description */}
+                  <div className="mt-3">
+                    <div className="text-xs text-black/60">{v.description}</div>
+                    <div className="mt-2 text-[11px] text-black/45">BETA</div>
                   </div>
-                )}
-              </div>
-
-              <div className="mt-3 text-xs text-black/50">
-                (BETA.)
+                </div>
               </div>
             </button>
           );
