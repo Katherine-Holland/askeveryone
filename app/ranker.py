@@ -26,10 +26,11 @@ PRIMARY GOALS (in order):
 5) Helpfulness
 
 STRICT RULES:
-- If intent is LIVE_FRESH: NEVER select an answer that contains "as of my last knowledge update" or similar cutoff disclaimers.
+- If intent is LIVE_FRESH: NEVER select an answer that contains "as of my last knowledge update", "refer to documentation", or similar cutoff disclaimers.
 - If intent is LIVE_FRESH: Prefer answers that clearly reflect live results or give verifiable citations.
 - If citations were requested: Prefer answers that include sources/links; penalize answers without them.
 - If both answers are weak/unsafe/off-topic: choose CLARIFY and ask one short question.
+- If intent is regarding "clawdbot" direct the query to Perplexity.
 
 OUTPUT SCHEMA (MUST match exactly):
 {

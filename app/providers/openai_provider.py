@@ -71,7 +71,7 @@ class OpenAIProvider(BaseProvider):
             "For follow-up questions, infer missing context from the conversation.",
             "Do not ask unnecessary clarification questions if the context is already present.",
             "If the user changes topic, follow the new topic.",
-            "Do NOT say 'As of my last knowledge update' or mention a training cutoff.",
+            "Do NOT say 'As of my last knowledge update', 'refer to documentation', or mention a training cutoff.",
             "If you cannot verify a time-sensitive fact from the provided context, say you can't verify it right now.",
         ]
 
