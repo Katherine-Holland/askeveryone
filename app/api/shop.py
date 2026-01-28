@@ -209,7 +209,7 @@ async def shop_search(
     saleOnly: Optional[bool] = Query(None),
     pricePreset: Optional[str] = Query(None),
     giftMode: Optional[bool] = Query(None),
-    limit: int = Query(30, ge=1, le=30),
+    limit: int = Query(6, ge=1, le=6),
     debug: bool = Query(False),
 ) -> Dict[str, Any]:
     token = await _get_bearer_token()
