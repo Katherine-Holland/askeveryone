@@ -121,21 +121,31 @@ def _format_price(amount: Any, currency: str) -> str:
 
 def _extract_media_url(media: Any) -> str:
     """
-    Shopify Catalog raw item includes:
-      media: [ { url, altText } ]
+    Tries multiple shapes seen in Shopify payloads.
+    media can be:
+      - [ { url: "..." } ]
+      - [ { src: "..." } ]
+      - [ { image: { url: "..." } } ]
+      - [ { previewImage: { url: "..." } } ]
+      - [ "https://..." ]
     """
     if isinstance(media, list) and media:
         first = media[0]
+
+        if isinstance(first, str) and first.strip():
+            return first.strip()
+
         if isinstance(first, dict):
-            return _first_str(first.get("url"))
+            return _first_str(
+                first.get("url"),
+                first.get("src"),
+                (first.get("image") or {}).get("url") if isinstance(first.get("image"), dict) else "",
+                (first.get("previewImage") or {}).get("url") if isinstance(first.get("previewImage"), dict) else "",
+            )
     return ""
 
 
 def _extract_variant(up: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Your raw payload includes `variants: [ {...} ]`.
-    We’ll use the first variant as the primary purchasable offer.
-    """
     variants = up.get("variants")
     if isinstance(variants, list) and variants and isinstance(variants[0], dict):
         return variants[0]
@@ -148,34 +158,28 @@ def _to_shop_product(up: Dict[str, Any]) -> Dict[str, Any]:
 
     variant = _extract_variant(up)
 
-    # --- Merchant (clean) ---
     shop = variant.get("shop") if isinstance(variant.get("shop"), dict) else {}
     merchant_name = _first_str(shop.get("name")) or "Shopify"
     merchant_url = _first_str(shop.get("onlineStoreUrl"))
 
-    # --- Image ---
     image_url = _extract_media_url(up.get("media"))
     if not image_url:
         image_url = _extract_media_url(variant.get("media"))
     if not image_url:
         image_url = "/window.svg"
 
-    # --- Price ---
-    # Prefer priceRange.min
     pr = up.get("priceRange")
     if isinstance(pr, dict) and isinstance(pr.get("min"), dict):
         price_amount = pr["min"].get("amount")
         price_currency = pr["min"].get("currency") or "USD"
         price_str = _format_price(price_amount, str(price_currency))
     else:
-        # Fallback to variant.price
         vp = variant.get("price")
         if isinstance(vp, dict):
             price_str = _format_price(vp.get("amount"), str(vp.get("currency") or "USD"))
         else:
             price_str = "— USD"
 
-    # --- Link ---
     href = _first_str(
         variant.get("variantUrl"),
         variant.get("checkoutUrl"),
@@ -183,9 +187,7 @@ def _to_shop_product(up: Dict[str, Any]) -> Dict[str, Any]:
         merchant_url,
     ) or "#"
 
-    # --- Badges ---
     badges: List[str] = []
-    # If we later get compare-at fields, we’ll add "Sale" here.
 
     return {
         "id": upid or title,
@@ -201,15 +203,12 @@ def _to_shop_product(up: Dict[str, Any]) -> Dict[str, Any]:
 @router.get("/shop/search")
 async def shop_search(
     q: str = Query(..., description="Search query from UI (frontend uses q=...)"),
-    country: Optional[str] = Query(
-        None, description="ISO alpha-2 (e.g. GB, US). UK normalizes to GB."
-    ),
+    country: Optional[str] = Query(None, description="ISO alpha-2 (e.g. GB, US). UK normalizes to GB."),
     gender: Optional[str] = Query(None),
     size: Optional[str] = Query(None),
     saleOnly: Optional[bool] = Query(None),
     pricePreset: Optional[str] = Query(None),
     giftMode: Optional[bool] = Query(None),
-    # default now 30 (still capped at 30)
     limit: int = Query(30, ge=1, le=30),
     debug: bool = Query(False),
 ) -> Dict[str, Any]:
@@ -219,7 +218,7 @@ async def shop_search(
         "query": q,
         "available_for_sale": 1,
         "limit": limit,
-        "products_limit": 10,
+        "products_limit": limit,  # ✅ IMPORTANT: keep hydration consistent
     }
 
     if country:
