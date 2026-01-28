@@ -219,7 +219,7 @@ async def shop_search(
         "query": q,
         "available_for_sale": 1,
         "limit": limit,
-        "products_limit": 30,
+        "products_limit": 10,
     }
 
     if country:
