@@ -290,7 +290,7 @@ export default function ShopPage() {
       url.searchParams.set("giftMode", prefs.giftMode ? "true" : "false");
 
       // ✅ fetch more than 6 so we can paginate client-side
-      url.searchParams.set("limit", "30");
+      url.searchParams.set("limit", "10");
 
       const r = await fetch(url.toString(), { method: "GET", cache: "no-store" });
       const data = (await r.json().catch(() => null)) as ShopSearchResponse | null;
