@@ -209,8 +209,8 @@ async def shop_search(
     saleOnly: Optional[bool] = Query(None),
     pricePreset: Optional[str] = Query(None),
     giftMode: Optional[bool] = Query(None),
-    # ✅ default now 6 (still capped at 10)
-    limit: int = Query(6, ge=1, le=10),
+    # default now 30 (still capped at 30)
+    limit: int = Query(30, ge=1, le=30),
     debug: bool = Query(False),
 ) -> Dict[str, Any]:
     token = await _get_bearer_token()
@@ -219,7 +219,7 @@ async def shop_search(
         "query": q,
         "available_for_sale": 1,
         "limit": limit,
-        "products_limit": 10,
+        "products_limit": 30,
     }
 
     if country:
