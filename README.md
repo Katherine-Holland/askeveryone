@@ -1,27 +1,43 @@
-# askeveryone
+# Seekle
 
-Seekle LLM search engine
+[Seekle](https://seekle.io) is an Answer Engine Optimization (AEO) platform. Ask a question and Seekle routes it to the most suitable AI provider(s), selects the strongest response, and returns one clear answer with verifiable citations — so you're not limited to a single model's knowledge or browsing ability.
 
-## Setup
+It's built for anyone who needs fast, sourced answers: founders doing research, marketers understanding AI-driven discovery, operators cutting down on tab-switching, and researchers following citations.
 
-1. Clone the repository
-2. Copy `.env.example` to `.env` and configure environment variables
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+---
 
-## Development
+## Running locally
 
-Run the application locally:
+**Requirements:** Python 3.11+, Node.js 18+, a Postgres database.
+
+### Backend
+
 ```bash
-python app.py
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # fill in your API keys
+uvicorn app.main:app --reload
 ```
+
+### Frontend
+
+```bash
+cd seekle-frontend
+npm install
+npm run dev
+```
+
+---
+
+## Environment variables
+
+Create a `.env` file in the project root. All secrets are read from environment — nothing is hardcoded. See `app/config.py` for the full list with defaults.
+
+---
 
 ## Deployment
 
-This project is configured for deployment on Render using `render.yaml`.
+Backend is configured for [Render](https://render.com) via `render.yaml`. Set environment variables in the Render dashboard.
 
-## Environment Variables
-
-See `.env.example` for required configuration.
+The frontend deploys to Vercel or any Next.js-compatible host.
